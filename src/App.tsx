@@ -1027,11 +1027,7 @@ class EditorErrorBoundary extends Component<EditorErrorBoundaryProps, ErrorBound
     if (!this.state.error) return this.props.children
 
     return (
-      <MarkdownEditorFallback
-        markdown={this.props.markdown}
-        onChange={this.props.onChange}
-        errorMessage={this.state.error.message}
-      />
+      <MarkdownEditorFallback markdown={this.props.markdown} onChange={this.props.onChange} />
     )
   }
 }
@@ -1039,20 +1035,17 @@ class EditorErrorBoundary extends Component<EditorErrorBoundaryProps, ErrorBound
 function MarkdownEditorFallback({
   markdown,
   onChange,
-  errorMessage,
 }: {
   markdown: string
   onChange: (content: string) => void
-  errorMessage?: string
 }) {
   return (
     <section className="document-editor editor-fallback">
       <div className="editor-mode-bar">
         <div>
           <strong>正文</strong>
-          <span>富文本编辑器暂时不可用，已切换到 Markdown 编辑。</span>
+          <span>已切换到稳定编辑模式，内容会正常保存为 Markdown。</span>
         </div>
-        {errorMessage ? <span className="editor-fallback-note">{errorMessage}</span> : null}
       </div>
       <textarea
         className="source-editor"
