@@ -1,0 +1,35 @@
+:root {
+  color-scheme: light;
+  font-family:
+    'Source Han Sans SC',
+    'Noto Sans CJK SC',
+    'Noto Sans SC',
+    'Microsoft YaHei',
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+body {
+  overflow: hidden;
+}
+
+@media (max-width: 920px) {
+  body {
+    overflow: auto;
+  }
+}

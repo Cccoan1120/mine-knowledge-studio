@@ -1,0 +1,33 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  notes        Note[]
+}
+
+model Note {
+  id             String   @id @default(cuid())
+  userId         String
+  title          String
+  content        String
+  summary        String   @default("")
+  tags           String[] @default([])
+  topic          String   @default("Inbox")
+  source         String   @default("")
+  relatedNoteIds String[] @default([])
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, updatedAt])
+}
