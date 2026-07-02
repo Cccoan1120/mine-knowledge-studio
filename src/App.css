@@ -337,6 +337,51 @@ button:focus-visible {
   line-height: 1.5;
 }
 
+.app-error-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  color: var(--mine-ink);
+  background:
+    linear-gradient(90deg, rgba(37, 99, 235, 0.055) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(32, 38, 34, 0.045) 1px, transparent 1px),
+    linear-gradient(135deg, #f9f6ef 0%, #f1ede3 50%, #e9eee9 100%);
+  background-size: 48px 48px, 48px 48px, auto;
+}
+
+.app-error-card {
+  width: min(460px, 100%);
+  padding: 28px;
+  border: 1px solid var(--mine-line);
+  border-radius: 8px;
+  background: var(--mine-paper);
+  box-shadow: var(--mine-shadow-paper);
+}
+
+.app-error-card p,
+.app-error-card h1 {
+  margin: 0;
+}
+
+.app-error-card p {
+  color: var(--mine-accent);
+  font-weight: 800;
+}
+
+.app-error-card h1 {
+  margin-top: 8px;
+  font-size: 28px;
+  line-height: 1.2;
+}
+
+.app-error-card span {
+  display: block;
+  margin: 14px 0 18px;
+  color: var(--mine-muted);
+  line-height: 1.6;
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;

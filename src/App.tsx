@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
   Download,
   FileDown,
@@ -738,7 +738,7 @@ function App() {
         ) : null}
       </section>
 
-      {showAssistant ? (
+      {showAssistant && selectedNote ? (
         <Suspense
           fallback={
             <aside className="assistant-panel assistant-loading" style={{ width: assistantWidth }}>
@@ -771,6 +771,26 @@ function App() {
             onSelectNote={setSelectedId}
           />
         </Suspense>
+      ) : showAssistant ? (
+        <aside className="assistant-panel assistant-empty" style={{ width: assistantWidth }} aria-label="Mine Copilot">
+          <header className="assistant-header">
+            <div>
+              <p>Mine Copilot</p>
+              <h2>先创建一条素材</h2>
+            </div>
+            <button type="button" className="assistant-collapse" onClick={() => setShowAssistant(false)} aria-label="收起 AI 面板" title="收起 AI 面板">
+              <PanelRightOpen size={17} />
+            </button>
+          </header>
+          <div className="assistant-card">
+            <p className="section-kicker">当前素材库为空</p>
+            <p>创建或导入第一条素材后，AI 收纳、问答和输出面板会在这里可用。</p>
+          </div>
+          <button type="button" className="primary-action" onClick={() => createNote()}>
+            <FilePlus2 size={16} />
+            创建第一条素材
+          </button>
+        </aside>
       ) : (
         <aside className="assistant-rail" aria-label="AI 面板已收起">
           <button type="button" onClick={() => setShowAssistant(true)} aria-label="打开 AI 收纳面板" title="打开 AI 收纳面板">
@@ -980,4 +1000,39 @@ function downloadMarkdown(fileName: string, content: string) {
   URL.revokeObjectURL(url)
 }
 
-export default App
+type ErrorBoundaryState = {
+  error: Error | null
+}
+
+class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { error: null }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children
+
+    return (
+      <main className="app-error-shell">
+        <section className="app-error-card">
+          <p>Mine 遇到前端显示错误</p>
+          <h1>页面没有正常加载</h1>
+          <span>{this.state.error.message || '请刷新页面，或稍后再试。'}</span>
+          <button type="button" className="primary-action" onClick={() => window.location.reload()}>
+            刷新页面
+          </button>
+        </section>
+      </main>
+    )
+  }
+}
+
+export default function Root() {
+  return (
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
+  )
+}
