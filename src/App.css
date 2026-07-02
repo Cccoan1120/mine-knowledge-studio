@@ -1133,6 +1133,18 @@ button:focus-visible {
   white-space: pre;
 }
 
+.editor-fallback .source-editor {
+  resize: none;
+}
+
+.editor-fallback-note {
+  max-width: 220px;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .assistant-panel {
   position: relative;
   display: flex;

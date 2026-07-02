@@ -715,13 +715,15 @@ function App() {
               </div>
             </section>
 
-            <Suspense fallback={<div className="document-loading">正在加载编辑器...</div>}>
-              <RichMarkdownEditor
-                key={selectedNote.id}
-                markdown={editorMarkdown}
-                onChange={(content) => updateSelectedNote({ content })}
-              />
-            </Suspense>
+            <EditorErrorBoundary
+              key={selectedNote.id}
+              markdown={editorMarkdown}
+              onChange={(content) => updateSelectedNote({ content })}
+            >
+              <Suspense fallback={<div className="document-loading">正在加载编辑器...</div>}>
+                <RichMarkdownEditor markdown={editorMarkdown} onChange={(content) => updateSelectedNote({ content })} />
+              </Suspense>
+            </EditorErrorBoundary>
           </article>
         ) : (
           <div className="empty-state">
@@ -1002,6 +1004,64 @@ function downloadMarkdown(fileName: string, content: string) {
 
 type ErrorBoundaryState = {
   error: Error | null
+}
+
+type EditorErrorBoundaryProps = {
+  children: ReactNode
+  markdown: string
+  onChange: (content: string) => void
+}
+
+class EditorErrorBoundary extends Component<EditorErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { error: null }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+
+  componentDidCatch(error: Error) {
+    console.error('Rich markdown editor failed. Falling back to source editor.', error)
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children
+
+    return (
+      <MarkdownEditorFallback
+        markdown={this.props.markdown}
+        onChange={this.props.onChange}
+        errorMessage={this.state.error.message}
+      />
+    )
+  }
+}
+
+function MarkdownEditorFallback({
+  markdown,
+  onChange,
+  errorMessage,
+}: {
+  markdown: string
+  onChange: (content: string) => void
+  errorMessage?: string
+}) {
+  return (
+    <section className="document-editor editor-fallback">
+      <div className="editor-mode-bar">
+        <div>
+          <strong>正文</strong>
+          <span>富文本编辑器暂时不可用，已切换到 Markdown 编辑。</span>
+        </div>
+        {errorMessage ? <span className="editor-fallback-note">{errorMessage}</span> : null}
+      </div>
+      <textarea
+        className="source-editor"
+        value={markdown}
+        onChange={(event) => onChange(event.target.value)}
+        spellCheck={false}
+      />
+    </section>
+  )
 }
 
 class AppErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
