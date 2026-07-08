@@ -136,7 +136,7 @@ function mockGenerateOutput(type: OutputType, notes: Note[]) {
   const sections = notes
     .map((note, index) => `${index + 1}. ${note.title}\n   - ${note.summary || summarize(note.content)}`)
     .join('\n')
-  return `# ${titleMap[type]}\n\n## 关键素材\n${sections}\n\n## 来源\n${notes.map((note) => `- ${note.title}`).join('\n')}\n`
+  return `# ${titleMap[type]}\n\n## 关键素材\n${sections}\n\n## 来源引用\n${notes.map((note) => `- ${note.title}${sourceFromNote(note) ? `：${sourceFromNote(note)}` : ''}`).join('\n')}\n`
 }
 
 function summarize(content: string) {
@@ -161,4 +161,14 @@ function tokenize(value: string) {
   })
 
   return [...words, ...cjkBigrams]
+}
+
+function sourceFromNote(note: Note) {
+  return (
+    note.content.match(/^- 原始来源：(.+)$/m)?.[1]?.trim() ||
+    note.content.match(/^- 原始链接：(.+)$/m)?.[1]?.trim() ||
+    note.content.match(/^来源：(.+)$/m)?.[1]?.trim() ||
+    note.source ||
+    ''
+  )
 }

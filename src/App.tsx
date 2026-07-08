@@ -689,6 +689,8 @@ function App() {
               rows={2}
             />
 
+            <SourceTraceBar note={selectedNote} />
+
             <section className="tag-manager" aria-label="标签管理">
               <div className="tag-manager-heading">
                 <Tags size={15} />
@@ -914,6 +916,43 @@ function importTopic(sourceType: ImportResult['sourceType']) {
 
 function mergeTags(currentTags: string[], nextTags: string[]) {
   return Array.from(new Set([...currentTags, ...nextTags].map((tag) => tag.trim()).filter(Boolean))).slice(0, 8)
+}
+
+function SourceTraceBar({ note }: { note: Note }) {
+  const source = parseSourceTrace(note)
+
+  return (
+    <section className="source-trace-bar" aria-label="来源追踪">
+      <div>
+        <span>来源可信度</span>
+        <strong>{source.reliability}</strong>
+      </div>
+      <div>
+        <span>平台</span>
+        <strong>{source.platform}</strong>
+      </div>
+      <div>
+        <span>导入方式</span>
+        <strong>{source.importMethod}</strong>
+      </div>
+    </section>
+  )
+}
+
+function parseSourceTrace(note: Note) {
+  const content = note.content || ''
+  return {
+    platform: content.match(/^- 平台：(.+)$/m)?.[1]?.trim() || note.source || '未知来源',
+    importMethod: content.match(/^- 导入方式：(.+)$/m)?.[1]?.trim() || '手动创建',
+    reliability: content.match(/^- 来源可信度：(.+)$/m)?.[1]?.trim() || sourceReliabilityFromNote(note),
+  }
+}
+
+function sourceReliabilityFromNote(note: Note) {
+  if (/^- 原始来源：https?:\/\//m.test(note.content) || /^来源：https?:\/\//m.test(note.content)) return '原文链接'
+  if (note.source === '手动粘贴') return '手动粘贴'
+  if (note.source) return note.source
+  return '手动创建'
 }
 
 function KnowledgeGraph({

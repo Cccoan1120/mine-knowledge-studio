@@ -83,7 +83,7 @@ describe('AI service proxy', () => {
     const output = await generateOutput('outline', demoNotes.slice(0, 2))
 
     expect(output).toContain('# 文章大纲')
-    expect(output).toContain('来源')
+    expect(output).toContain('来源引用')
   })
 
   it('uses server-generated markdown output when available', async () => {

@@ -108,6 +108,10 @@ export function ImportPanel({ onClose, onSave, onImportMarkdown }: ImportPanelPr
       setMode('text')
       setManualSourceType(result?.sourceType === 'podcast' ? 'podcast' : 'video')
     }
+
+    if (action.type === 'save-link-card') {
+      save(false)
+    }
   }
 
   const canImport = Boolean(
@@ -159,9 +163,12 @@ export function ImportPanel({ onClose, onSave, onImportMarkdown }: ImportPanelPr
 
             {mode === 'url' ? (
               <label>
-                文章、公众号、播客 RSS、B站或抖音链接
+                文章、公众号、播客 RSS、B站、抖音或小红书链接
                 <input value={url} placeholder="https://..." onChange={(event) => setUrl(event.target.value)} />
-                <span className="import-hint">B站和抖音可能需要登录后的 Cookie；解析失败时也可以上传音视频或粘贴文稿。</span>
+                <span className="import-hint">
+                  {url.trim() ? `识别为：${detectInputPlatform(url)}。` : ''}
+                  平台限制链接解析时，可以上传音视频、粘贴文稿，或先保存链接卡片。
+                </span>
               </label>
             ) : null}
 
@@ -326,6 +333,15 @@ function sourceLabel(sourceType: ImportSourceType) {
 
 function buildManualResult(title: string, text: string, sourceType: ImportSourceType): ImportResult {
   const finalTitle = title.trim() || (sourceType === 'podcast' ? '播客文稿' : sourceType === 'article' ? '文章摘录' : '视频文案')
+  const sourceBlock = [
+    '## 来源追踪',
+    '',
+    '- 平台：手动粘贴',
+    '- 原始来源：手动粘贴',
+    '- 导入方式：粘贴文稿',
+    '- 来源可信度：手动粘贴',
+    `- 导入时间：${new Date().toISOString()}`,
+  ].join('\n')
 
   return {
     status: 'ready',
@@ -333,7 +349,7 @@ function buildManualResult(title: string, text: string, sourceType: ImportSource
     platform: '手动粘贴',
     title: finalTitle,
     sourceUrl: '手动粘贴',
-    markdown: `# ${finalTitle}\n\n${text.trim()}\n`,
+    markdown: `# ${finalTitle}\n\n${sourceBlock}\n\n## 正文\n\n${text.trim()}\n`,
     extractedText: text.trim(),
     warnings: ['已从手动粘贴内容生成素材。'],
   }
@@ -346,4 +362,13 @@ function statusLabel(status: ImportResult['status']) {
     failed: '失败',
   }
   return labels[status]
+}
+
+function detectInputPlatform(value: string) {
+  if (/bilibili\.com|b23\.tv/i.test(value)) return 'B站'
+  if (/douyin\.com|iesdouyin\.com/i.test(value)) return '抖音'
+  if (/xiaohongshu\.com|xhslink\.com/i.test(value)) return '小红书'
+  if (/xiaoyuzhoufm\.com|ximalaya\.com|podcasts\.apple\.com|rss|feed|\.xml/i.test(value)) return '播客'
+  if (/mp\.weixin\.qq\.com/i.test(value)) return '微信公众号'
+  return '外部链接'
 }

@@ -53,7 +53,7 @@ export async function generateOutput(type, notes) {
       {
         role: 'system',
         content:
-          '你是内容创作者的素材复用助手。基于给定素材生成可直接保存为 Markdown 的内容，必须保留来源素材标题。outline=文章大纲，idea-card=选题卡，research-summary=研究摘要，wechat-draft=公众号草稿，xiaohongshu-note=小红书笔记，short-video-script=短视频脚本。',
+          '你是内容创作者的素材复用助手。基于给定素材生成可直接保存为 Markdown 的内容，必须保留来源素材标题，并在末尾生成“## 来源引用”区，列出使用过的素材标题和原始来源链接。outline=文章大纲，idea-card=选题卡，research-summary=研究摘要，wechat-draft=公众号草稿，xiaohongshu-note=小红书笔记，short-video-script=短视频脚本。',
       },
       { role: 'user', content: JSON.stringify({ type, notes: notes.map(pickNote) }) },
     ])) || mockGenerateOutput(type, notes)
@@ -170,7 +170,7 @@ function mockGenerateOutput(type, notes) {
   const sections = notes
     .map((note, index) => `${index + 1}. ${note.title}\n   - ${note.summary || summarize(note.content)}`)
     .join('\n')
-  return `# ${titleMap[type] || '内容输出'}\n\n## 关键素材\n${sections}\n\n## 来源\n${notes.map((note) => `- ${note.title}`).join('\n')}\n`
+  return `# ${titleMap[type] || '内容输出'}\n\n## 关键素材\n${sections}\n\n## 来源引用\n${notes.map((note) => `- ${note.title}${sourceFromNote(note) ? `：${sourceFromNote(note)}` : ''}`).join('\n')}\n`
 }
 
 function summarize(content) {
@@ -198,6 +198,17 @@ function tokenize(value) {
 
 function extractTitle(content, fallback) {
   return String(content || '').match(/^#\s+(.+)$/m)?.[1]?.trim() || fallback || '未命名素材'
+}
+
+function sourceFromNote(note) {
+  const content = String(note.content || '')
+  return (
+    content.match(/^- 原始来源：(.+)$/m)?.[1]?.trim() ||
+    content.match(/^- 原始链接：(.+)$/m)?.[1]?.trim() ||
+    content.match(/^来源：(.+)$/m)?.[1]?.trim() ||
+    note.source ||
+    ''
+  )
 }
 
 function pickNote(note) {

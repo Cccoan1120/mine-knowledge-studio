@@ -45,7 +45,8 @@ describe('external content extractors', () => {
 
     expect(result.status).toBe('ready')
     expect(result.markdown).toContain('# 公开博客文章')
-    expect(result.markdown).toContain('来源：')
+    expect(result.markdown).toContain('## 来源追踪')
+    expect(result.markdown).toContain('- 来源可信度：原文链接')
   })
 
   it('cleans vtt subtitles into readable transcript text', () => {
@@ -108,7 +109,8 @@ describe('external content extractors', () => {
     expect(result.sourceType).toBe('podcast')
     expect(result.title).toBe('第一期：知识库导入')
     expect(result.markdown).toContain('播客信息')
-    expect(result.diagnostics.suggestedActions.map((action) => action.type)).toContain('configure-transcription')
+    expect(result.markdown).toContain('## 来源追踪')
+    expect(result.diagnostics.suggestedActions.map((action) => action.type)).toContain('save-link-card')
   })
 
   it('finds a url inside pasted Douyin share text', async () => {
@@ -120,8 +122,21 @@ describe('external content extractors', () => {
     expect(result.platform).toBe('抖音')
     expect(result.warnings.length).toBeGreaterThan(0)
     expect(result.diagnostics.suggestedActions.map((action) => action.type)).toEqual(
-      expect.arrayContaining(['configure-auth', 'upload-media', 'paste-transcript']),
+      expect.arrayContaining(['upload-media', 'paste-transcript', 'save-link-card']),
     )
+    expect(result.markdown).toContain('## 待补全素材')
+    expect(result.markdown).toContain('## 来源追踪')
+  })
+
+  it('routes Xiaohongshu links into the stable video fallback flow', async () => {
+    const result = await extractFromUrl({
+      url: 'https://www.xiaohongshu.com/explore/not-real',
+    })
+
+    expect(result.sourceType).toBe('video')
+    expect(result.platform).toBe('小红书')
+    expect(result.markdown).toContain('链接卡片待补全')
+    expect(result.diagnostics.suggestedActions.map((action) => action.type)).toContain('save-link-card')
   })
 
   it('reports local import capabilities', async () => {

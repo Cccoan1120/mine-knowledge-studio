@@ -68,6 +68,7 @@ export type ImportActionType =
   | 'configure-transcription'
   | 'upload-media'
   | 'paste-transcript'
+  | 'save-link-card'
   | 'retry'
 
 export type ImportSuggestedAction = {

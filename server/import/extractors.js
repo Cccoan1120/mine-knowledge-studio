@@ -75,7 +75,12 @@ export async function extractArticleUrl(url) {
       platform: detectPlatform(url),
       title,
       sourceUrl: url,
-      markdown: buildSourceMarkdown(title, markdown, url),
+      markdown: buildSourceMarkdown(title, markdown, {
+        platform: detectPlatform(url),
+        sourceUrl: url,
+        importMethod: '公开网页正文提取',
+        sourceType: 'article',
+      }),
       extractedText: stripMarkdown(markdown),
       warnings: article?.byline ? [`作者：${article.byline}`] : [],
     })
@@ -113,7 +118,16 @@ export async function extractPodcastUrl(url, aiConfig = {}) {
         platform: detectPlatform(url),
         title,
         sourceUrl: url,
-        markdown: `# ${title}\n\n## 节目简介\n\n${description || '暂无简介'}\n\n## 转写文本\n\n${transcript}\n\n---\n\n来源：${url}\n`,
+        markdown: buildSourceMarkdown(
+          title,
+          `## 节目简介\n\n${description || '暂无简介'}\n\n## 转写文本\n\n${transcript}`,
+          {
+            platform: detectPlatform(url),
+            sourceUrl: url,
+            importMethod: '播客音频自动转写',
+            sourceType: 'podcast',
+          },
+        ),
         extractedText: transcript,
         warnings: ['已识别播客音频并尝试转写。'],
       })
@@ -125,7 +139,16 @@ export async function extractPodcastUrl(url, aiConfig = {}) {
       platform: detectPlatform(url),
       title,
       sourceUrl: url,
-      markdown: `# ${title}\n\n## 节目简介\n\n${description || '未提取到节目简介。'}\n\n${audioUrl ? `音频链接：${audioUrl}\n\n> 配置转写模型后可自动提取播客全文。` : '> 未找到可直接访问的音频链接，可上传音频文件进行转写。'}\n\n---\n\n来源：${url}\n`,
+      markdown: buildSourceMarkdown(
+        title,
+        `## 节目简介\n\n${description || '未提取到节目简介。'}\n\n${audioUrl ? `音频链接：${audioUrl}\n\n> 配置转写模型后可自动提取播客全文。` : '> 未找到可直接访问的音频链接，可上传音频文件进行转写。'}`,
+        {
+          platform: detectPlatform(url),
+          sourceUrl: url,
+          importMethod: audioUrl ? '播客页面提取音频链接' : '播客页面信息提取',
+          sourceType: 'podcast',
+        },
+      ),
       extractedText: description,
       warnings: audioUrl ? ['已找到音频链接，但未配置转写 API Key。'] : ['未找到可直接访问的播客音频。'],
       diagnostics: podcastDiagnostics(Boolean(audioUrl), hasTranscriptionConfig(aiConfig)),
@@ -150,7 +173,12 @@ export async function extractVideoUrl(url, aiConfig = {}) {
         platform,
         title,
         sourceUrl: url,
-        markdown: buildSourceMarkdown(title, markdown, url),
+        markdown: buildSourceMarkdown(title, markdown, {
+          platform,
+          sourceUrl: url,
+          importMethod: '公开视频字幕提取',
+          sourceType: 'video',
+        }),
         extractedText: caption,
         warnings: ['已优先使用视频字幕/自动字幕生成素材。'],
       })
@@ -164,7 +192,12 @@ export async function extractVideoUrl(url, aiConfig = {}) {
         platform,
         title,
         sourceUrl: url,
-        markdown: buildSourceMarkdown(title, markdown, url),
+        markdown: buildSourceMarkdown(title, markdown, {
+          platform,
+          sourceUrl: url,
+          importMethod: '视频音频自动转写',
+          sourceType: 'video',
+        }),
         extractedText: transcription,
         warnings: ['未发现字幕，已尝试使用本地音频转写。'],
       })
@@ -176,7 +209,14 @@ export async function extractVideoUrl(url, aiConfig = {}) {
       platform,
       title,
       sourceUrl: url,
-      markdown: `# ${title}\n\n> Mine 已识别视频链接，但没有找到可用字幕。你可以上传本地音频/视频，或手动粘贴字幕后保存为素材。\n\n原始链接：${url}\n`,
+      markdown: buildPendingSourceMarkdown({
+        title,
+        platform,
+        sourceUrl: url,
+        sourceType: 'video',
+        reason: 'Mine 已识别视频链接，但没有找到可用字幕。',
+        description: '你可以上传本地音频/视频，或手动粘贴字幕后补全这条素材。',
+      }),
       extractedText: '',
       warnings: ['未找到字幕；如果需要自动转写，请安装 yt-dlp/ffmpeg 并配置转写 API Key。'],
       diagnostics: videoDiagnostics('未找到字幕', hasTranscriptionConfig(aiConfig)),
@@ -190,7 +230,14 @@ export async function extractVideoUrl(url, aiConfig = {}) {
       platform,
       title,
       sourceUrl: url,
-      markdown: `# ${title}\n\n## 视频信息\n\n- 平台：${platform}\n- 链接：${url}\n\n${metadata.description ? `## 页面简介\n\n${metadata.description}\n\n` : ''}> 自动解析未完成：${readableError(error)}。你可以上传本地视频/音频，或粘贴视频文案/字幕后保存为素材。\n`,
+      markdown: buildPendingSourceMarkdown({
+        title,
+        platform,
+        sourceUrl: url,
+        sourceType: 'video',
+        reason: `自动解析未完成：${readableError(error)}。`,
+        description: metadata.description || '你可以上传本地视频/音频，或粘贴视频文案/字幕后补全这条素材。',
+      }),
       extractedText: metadata.description || '',
       warnings: [`视频解析受限：${readableError(error)}。建议使用上传音视频或粘贴字幕兜底。`],
       diagnostics: videoDiagnostics(readableError(error), hasTranscriptionConfig(aiConfig)),
@@ -208,7 +255,16 @@ export async function extractImage({ imageUrl, file, aiConfig = {} }) {
       platform: imageUrl ? detectPlatform(imageUrl) : '本地图片',
       title: '图片摘录',
       sourceUrl: imageUrl || '',
-      markdown: `# 图片摘录\n\n> 已记录图片来源。配置支持图片输入的视觉模型后，Mine 可以提取图片文字、摘要和标签建议。\n\n来源：${source}\n`,
+      markdown: buildSourceMarkdown(
+        '图片摘录',
+        '> 已记录图片来源。配置支持图片输入的视觉模型后，Mine 可以提取图片文字、摘要和标签建议。',
+        {
+          platform: imageUrl ? detectPlatform(imageUrl) : '本地图片',
+          sourceUrl: source,
+          importMethod: imageUrl ? '图片链接保存' : '本地图片上传',
+          sourceType: 'image',
+        },
+      ),
       extractedText: '',
       warnings: [
         isDeepSeekBase(visionConfig.baseUrl)
@@ -226,7 +282,12 @@ export async function extractImage({ imageUrl, file, aiConfig = {} }) {
     platform: imageUrl ? detectPlatform(imageUrl) : '本地图片',
     title: firstLine(text) || '图片摘录',
     sourceUrl: imageUrl || '',
-    markdown: `# ${firstLine(text) || '图片摘录'}\n\n## 图片内容\n\n${text}\n\n## 来源\n\n${source}\n`,
+    markdown: buildSourceMarkdown(firstLine(text) || '图片摘录', `## 图片内容\n\n${text}`, {
+      platform: imageUrl ? detectPlatform(imageUrl) : '本地图片',
+      sourceUrl: source,
+      importMethod: imageUrl ? '图片链接 OCR' : '本地图片 OCR',
+      sourceType: 'image',
+    }),
     extractedText: text,
     warnings: [],
   })
@@ -242,7 +303,16 @@ export async function extractMedia({ file, aiConfig = {} }) {
       platform: '本地媒体',
       title: file.originalname,
       sourceUrl: file.originalname,
-      markdown: `# ${file.originalname}\n\n> 已收到媒体文件。配置支持音频转写的服务后，可以自动转写为素材。\n`,
+      markdown: buildSourceMarkdown(
+        file.originalname,
+        '> 已收到媒体文件。配置支持音频转写的服务后，可以自动转写为素材。',
+        {
+          platform: '本地媒体',
+          sourceUrl: file.originalname,
+          importMethod: '本地音视频上传',
+          sourceType: file.mimetype?.startsWith('audio/') ? 'podcast' : 'video',
+        },
+      ),
       extractedText: '',
       warnings: [
         isDeepSeekBase(transcriptionConfig.baseUrl)
@@ -259,7 +329,12 @@ export async function extractMedia({ file, aiConfig = {} }) {
     platform: '本地媒体',
     title: file.originalname,
     sourceUrl: file.originalname,
-    markdown: `# ${file.originalname}\n\n## 转写文本\n\n${text}\n`,
+    markdown: buildSourceMarkdown(file.originalname, `## 转写文本\n\n${text}`, {
+      platform: '本地媒体',
+      sourceUrl: file.originalname,
+      importMethod: '本地音视频转写',
+      sourceType: file.mimetype?.startsWith('audio/') ? 'podcast' : 'video',
+    }),
     extractedText: text,
     warnings: [],
   })
@@ -314,14 +389,14 @@ async function resolveUrl(url) {
 function shouldResolveUrl(url) {
   try {
     const host = new URL(url).hostname
-    return /^(b23\.tv|v\.douyin\.com|www\.iesdouyin\.com|m\.weibo\.cn)$/.test(host)
+    return /^(b23\.tv|v\.douyin\.com|www\.iesdouyin\.com|m\.weibo\.cn|xhslink\.com)$/.test(host)
   } catch {
     return false
   }
 }
 
 function isVideoUrl(url) {
-  return /bilibili\.com|b23\.tv|douyin\.com|iesdouyin\.com|youtube\.com|youtu\.be|vimeo\.com/.test(url)
+  return /bilibili\.com|b23\.tv|douyin\.com|iesdouyin\.com|xiaohongshu\.com|xhslink\.com|youtube\.com|youtu\.be|vimeo\.com/.test(url)
 }
 
 function isPodcastUrl(url) {
@@ -339,6 +414,7 @@ function detectPlatform(url) {
   if (url.includes('mp.weixin.qq.com')) return '微信公众号'
   if (url.includes('bilibili.com') || url.includes('b23.tv')) return 'B站'
   if (url.includes('douyin.com') || url.includes('iesdouyin.com')) return '抖音'
+  if (url.includes('xiaohongshu.com') || url.includes('xhslink.com')) return '小红书'
   if (url.includes('xiaoyuzhoufm.com')) return '小宇宙'
   if (url.includes('ximalaya.com')) return '喜马拉雅'
   if (url.includes('podcasts.apple.com')) return 'Apple Podcasts'
@@ -398,7 +474,12 @@ function extractWechatArticle(dom, url) {
     platform: '微信公众号',
     title,
     sourceUrl: url,
-    markdown: `# ${title}\n\n${meta}\n\n## 正文\n\n${markdown}\n`,
+    markdown: buildSourceMarkdown(title, `${meta}\n\n## 正文\n\n${markdown}`, {
+      platform: '微信公众号',
+      sourceUrl: url,
+      importMethod: '公众号正文提取',
+      sourceType: 'article',
+    }),
     extractedText: stripMarkdown(markdown),
     warnings: author ? [`作者：${author}`] : [],
   })
@@ -446,7 +527,16 @@ async function extractPodcastFeed(xmlText, url, aiConfig) {
       platform: detectPlatform(url),
       title,
       sourceUrl: url,
-      markdown: `# ${title}\n\n## 播客信息\n\n- 播客：${channelTitle}\n- 音频：${audioUrl}\n- RSS：${url}\n\n## 转写文本\n\n${transcript}\n`,
+      markdown: buildSourceMarkdown(
+        title,
+        `## 播客信息\n\n- 播客：${channelTitle}\n- 音频：${audioUrl}\n- RSS：${url}\n\n## 转写文本\n\n${transcript}`,
+        {
+          platform: detectPlatform(url),
+          sourceUrl: url,
+          importMethod: 'RSS 音频自动转写',
+          sourceType: 'podcast',
+        },
+      ),
       extractedText: transcript,
       warnings: ['已从 RSS 识别最新单集并尝试转写。'],
     })
@@ -458,7 +548,16 @@ async function extractPodcastFeed(xmlText, url, aiConfig) {
     platform: detectPlatform(url),
     title,
     sourceUrl: url,
-    markdown: `# ${title}\n\n## 播客信息\n\n- 播客：${channelTitle}\n- 音频：${audioUrl}\n- RSS：${url}\n\n## 节目简介\n\n${description || '暂无简介'}\n\n${isAudioFileUrl(audioUrl) ? '> 配置转写模型后可自动转写该单集。' : ''}\n`,
+    markdown: buildSourceMarkdown(
+      title,
+      `## 播客信息\n\n- 播客：${channelTitle}\n- 音频：${audioUrl}\n- RSS：${url}\n\n## 节目简介\n\n${description || '暂无简介'}\n\n${isAudioFileUrl(audioUrl) ? '> 配置转写模型后可自动转写该单集。' : ''}`,
+      {
+        platform: detectPlatform(url),
+        sourceUrl: url,
+        importMethod: 'RSS 节目信息提取',
+        sourceType: 'podcast',
+      },
+    ),
     extractedText: stripMarkdown(description || ''),
     warnings: isAudioFileUrl(audioUrl) ? ['已识别播客音频，但未配置转写 API Key。'] : [],
     diagnostics: isAudioFileUrl(audioUrl) ? podcastDiagnostics(true, hasTranscriptionConfig(aiConfig)) : undefined,
@@ -473,7 +572,12 @@ async function extractAudioUrl(url, aiConfig) {
       platform: detectPlatform(url),
       title: fileNameFromUrl(url) || '播客音频',
       sourceUrl: url,
-      markdown: `# ${fileNameFromUrl(url) || '播客音频'}\n\n## 转写文本\n\n${transcript}\n\n---\n\n来源：${url}\n`,
+      markdown: buildSourceMarkdown(fileNameFromUrl(url) || '播客音频', `## 转写文本\n\n${transcript}`, {
+        platform: detectPlatform(url),
+        sourceUrl: url,
+        importMethod: '音频直链自动转写',
+        sourceType: 'podcast',
+      }),
       extractedText: transcript,
       warnings: [],
     })
@@ -485,7 +589,16 @@ async function extractAudioUrl(url, aiConfig) {
     platform: detectPlatform(url),
     title: fileNameFromUrl(url) || '播客音频',
     sourceUrl: url,
-    markdown: `# ${fileNameFromUrl(url) || '播客音频'}\n\n> 已识别音频链接。配置转写模型后可自动提取播客内容。\n\n来源：${url}\n`,
+    markdown: buildSourceMarkdown(
+      fileNameFromUrl(url) || '播客音频',
+      '> 已识别音频链接。配置转写模型后可自动提取播客内容。',
+      {
+        platform: detectPlatform(url),
+        sourceUrl: url,
+        importMethod: '音频直链保存',
+        sourceType: 'podcast',
+      },
+    ),
     extractedText: '',
     warnings: ['未配置 AI Key，未执行语音转写。'],
     diagnostics: podcastDiagnostics(true, false),
@@ -542,8 +655,61 @@ function fileNameFromUrl(url) {
   }
 }
 
-function buildSourceMarkdown(title, body, sourceUrl) {
-  return `# ${title}\n\n${body.trim()}\n\n---\n\n来源：${sourceUrl}\n`
+function buildSourceMarkdown(title, body, source = {}) {
+  return `# ${title}\n\n${sourceTraceBlock({
+    platform: source.platform || detectPlatform(source.sourceUrl || ''),
+    sourceUrl: source.sourceUrl || '',
+    importMethod: source.importMethod || '链接导入',
+    sourceType: source.sourceType || 'article',
+  })}\n\n${body.trim()}\n`
+}
+
+function buildPendingSourceMarkdown({ title, platform, sourceUrl, sourceType, reason, description }) {
+  return buildSourceMarkdown(
+    title,
+    [
+      '## 待补全素材',
+      '',
+      `> ${reason}`,
+      '',
+      description,
+      '',
+      '你可以继续补充：',
+      '',
+      '- 上传本地音视频，让 Mine 尝试转写。',
+      '- 粘贴字幕、视频文案或播客文稿。',
+      '- 先保存这张链接卡片，之后再回来补充正文。',
+    ].join('\n'),
+    {
+      platform,
+      sourceUrl,
+      importMethod: '链接卡片待补全',
+      sourceType,
+    },
+  )
+}
+
+function sourceTraceBlock({ platform, sourceUrl, importMethod, sourceType }) {
+  const originalSource = sourceUrl || '未知来源'
+  return [
+    '## 来源追踪',
+    '',
+    `- 平台：${platform || '外部来源'}`,
+    `- 原始来源：${originalSource}`,
+    `- 导入方式：${importMethod}`,
+    `- 来源可信度：${sourceReliability({ sourceUrl, importMethod, sourceType })}`,
+    `- 导入时间：${new Date().toISOString()}`,
+  ].join('\n')
+}
+
+function sourceReliability({ sourceUrl, importMethod, sourceType }) {
+  if (importMethod.includes('自动字幕')) return '自动字幕'
+  if (importMethod.includes('转写')) return '自动转写'
+  if (importMethod.includes('上传')) return sourceType === 'image' ? '上传图片' : '上传文件'
+  if (importMethod.includes('OCR')) return '图片 OCR'
+  if (sourceUrl && /^https?:\/\//.test(sourceUrl)) return '原文链接'
+  if (sourceUrl === '手动粘贴') return '手动粘贴'
+  return '链接卡片'
 }
 
 function stripMarkdown(markdown) {
@@ -729,32 +895,19 @@ function needsAction(sourceType, sourceUrl, warning, title = '外部内容') {
     platform: sourceUrl ? detectPlatform(sourceUrl) : '外部来源',
     title,
     sourceUrl,
-    markdown: `# ${title}\n\n> ${warning}\n\n来源：${sourceUrl}\n`,
+    markdown: buildSourceMarkdown(title, `> ${warning}`, {
+      platform: sourceUrl ? detectPlatform(sourceUrl) : '外部来源',
+      sourceUrl,
+      importMethod: '链接卡片待补全',
+      sourceType,
+    }),
     extractedText: '',
     warnings: [warning],
   }
 }
 
 function videoDiagnostics(reason, transcriptionConfigured) {
-  const suggestedActions = []
-
-  if (!hasYtDlpAuth()) {
-    suggestedActions.push({
-      type: 'configure-auth',
-      label: '使用本机登录态',
-      description: 'B站、抖音常需要登录后的浏览器 Cookie。配置后 Mine 会优先尝试授权解析字幕或音频。',
-    })
-  }
-
-  if (!transcriptionConfigured) {
-    suggestedActions.push({
-      type: 'configure-transcription',
-      label: '配置转写模型',
-      description: '没有公开字幕时，需要把音频转成文字。配置 API Key 和转写模型后可自动转写。',
-    })
-  }
-
-  suggestedActions.push(
+  const suggestedActions = [
     {
       type: 'upload-media',
       label: '上传音视频',
@@ -765,7 +918,12 @@ function videoDiagnostics(reason, transcriptionConfigured) {
       label: '粘贴字幕/文案',
       description: '把视频文案、字幕或评论区整理内容粘贴进 Mine，可以立即保存并 AI 收纳。',
     },
-  )
+    {
+      type: 'save-link-card',
+      label: '先保存链接卡片',
+      description: '先把标题、平台和原始链接保存进素材库，之后再回来补充字幕或文稿。',
+    },
+  ]
 
   return {
     authConfigured: hasYtDlpAuth(),
@@ -796,19 +954,7 @@ function visionDiagnostics(visionConfig) {
 }
 
 function podcastDiagnostics(audioDetected, transcriptionConfigured) {
-  const suggestedActions = []
-
-  if (!transcriptionConfigured) {
-    suggestedActions.push({
-      type: 'configure-transcription',
-      label: '配置转写模型',
-      description: audioDetected
-        ? '已经识别到音频链接，配置转写模型后可直接生成播客全文。'
-        : '播客通常没有全文稿，配置转写模型后可从音频生成文字。',
-    })
-  }
-
-  suggestedActions.push(
+  const suggestedActions = [
     {
       type: 'upload-media',
       label: '上传播客音频',
@@ -819,7 +965,12 @@ function podcastDiagnostics(audioDetected, transcriptionConfigured) {
       label: '粘贴节目文稿',
       description: '如果你已有 shownotes 或逐字稿，可以粘贴为素材后继续 AI 收纳。',
     },
-  )
+    {
+      type: 'save-link-card',
+      label: '先保存链接卡片',
+      description: '先保存播客标题、简介和音频来源，后续再补逐字稿或转写。',
+    },
+  ]
 
   return {
     transcriptionConfigured,
