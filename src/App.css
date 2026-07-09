@@ -1115,6 +1115,88 @@ button:focus-visible {
   background: var(--mine-ink);
 }
 
+.save-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 160px;
+}
+
+.save-now-button {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 16px;
+  border-color: var(--mine-line);
+  background: #fffdf8;
+  font-weight: 800;
+}
+
+.save-now-button:disabled {
+  cursor: progress;
+  opacity: 0.72;
+}
+
+.save-state {
+  min-width: 74px;
+  color: var(--mine-muted);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.save-state-dirty {
+  color: #8a5d15;
+}
+
+.save-state-saving {
+  color: var(--mine-accent);
+}
+
+.save-state-error {
+  color: var(--mine-danger);
+}
+
+.markdown-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--mine-soft-line);
+  background: #fffdf8;
+  scrollbar-width: thin;
+}
+
+.markdown-toolbar button {
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  flex: 0 0 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+
+.markdown-toolbar button:hover,
+.markdown-toolbar button:focus-visible {
+  border-color: var(--mine-line);
+  background: #f5efe3;
+}
+
+.markdown-toolbar span {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--mine-soft-line);
+}
+
 .document-editor .mdxeditor {
   flex: 1;
   min-height: 0;
@@ -1166,7 +1248,9 @@ button:focus-visible {
   border: 0;
   border-radius: 0;
   line-height: 1.7;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .editor-fallback .source-editor {

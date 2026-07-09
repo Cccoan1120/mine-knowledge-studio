@@ -80,6 +80,8 @@ function App() {
   const [generatedOutput, setGeneratedOutput] = useState('')
   const [busy, setBusy] = useState('')
   const [status, setStatus] = useState('请登录后开始使用你的专属素材库。')
+  const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving' | 'error'>('saved')
+  const [lastSavedAt, setLastSavedAt] = useState('')
   const [aiCapabilities, setAiCapabilities] = useState<PlatformAICapabilities | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [showImportPanel, setShowImportPanel] = useState(false)
@@ -96,6 +98,9 @@ function App() {
   })
   const [vaultHandle, setVaultHandle] = useState<DirectoryHandle | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const saveVersionRef = useRef(0)
+  const autosaveTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const pendingSaveRef = useRef<Record<string, Partial<Note>>>({})
 
   const selectedNote = notes.find((note) => note.id === selectedId) ?? notes[0]
   const tags = useMemo(
@@ -253,15 +258,80 @@ function App() {
   function updateSelectedNote(patch: Partial<Note>) {
     if (!selectedNote) return
     const updatedAt = new Date().toISOString()
+    const nextPatch = { ...patch, updatedAt }
     setNotes((current) =>
       current.map((note) =>
-        note.id === selectedNote.id ? { ...note, ...patch, updatedAt } : note,
+        note.id === selectedNote.id ? { ...note, ...nextPatch } : note,
       ),
     )
-    void updateCloudNote(selectedNote.id, { ...patch, updatedAt }).catch(() => setStatus('云端保存失败，请稍后重试。'))
+    scheduleCloudSave(selectedNote.id, nextPatch)
   }
 
-  async function createNote(content = '# 未命名素材\n\n写下一段资料，或粘贴网页、访谈、研究摘录。') {
+  function scheduleCloudSave(noteId: string, patch: Partial<Note>) {
+    pendingSaveRef.current[noteId] = { ...pendingSaveRef.current[noteId], ...patch }
+    setSaveState('dirty')
+
+    if (autosaveTimersRef.current[noteId]) clearTimeout(autosaveTimersRef.current[noteId])
+    autosaveTimersRef.current[noteId] = setTimeout(() => {
+      void flushCloudSave(noteId)
+    }, 700)
+  }
+
+  async function flushCloudSave(noteId: string) {
+    const patch = pendingSaveRef.current[noteId]
+    if (!patch) return
+
+    delete pendingSaveRef.current[noteId]
+    if (autosaveTimersRef.current[noteId]) {
+      clearTimeout(autosaveTimersRef.current[noteId])
+      delete autosaveTimersRef.current[noteId]
+    }
+
+    await persistCloudSave(noteId, patch)
+  }
+
+  async function persistCloudSave(noteId: string, patch: Partial<Note>) {
+    const version = saveVersionRef.current + 1
+    saveVersionRef.current = version
+    setSaveState('saving')
+
+    try {
+      await updateCloudNote(noteId, patch)
+      if (saveVersionRef.current !== version) return
+      setSaveState('saved')
+      setLastSavedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+    } catch {
+      if (saveVersionRef.current !== version) return
+      setSaveState('error')
+      setStatus('云端保存失败，请稍后重试。')
+    }
+  }
+
+  async function saveSelectedNote() {
+    if (!selectedNote) return
+    const updatedAt = new Date().toISOString()
+    const patch = {
+      title: selectedNote.title,
+      content: selectedNote.content,
+      summary: selectedNote.summary,
+      tags: selectedNote.tags,
+      topic: selectedNote.topic,
+      source: selectedNote.source,
+      relatedNoteIds: selectedNote.relatedNoteIds,
+      updatedAt,
+    }
+
+    if (autosaveTimersRef.current[selectedNote.id]) {
+      clearTimeout(autosaveTimersRef.current[selectedNote.id])
+      delete autosaveTimersRef.current[selectedNote.id]
+    }
+    delete pendingSaveRef.current[selectedNote.id]
+
+    setNotes((current) => current.map((note) => (note.id === selectedNote.id ? { ...note, updatedAt } : note)))
+    await persistCloudSave(selectedNote.id, patch)
+  }
+
+  async function createNote(content = '') {
     const now = new Date().toISOString()
     const title = extractTitle(content, '未命名素材')
     const note = await createCloudNote({
@@ -623,6 +693,19 @@ function App() {
                 {showNoteList ? <PanelLeftClose size={17} /> : <Search size={17} />}
               </button>
             </div>
+            <div className="save-cluster" aria-live="polite">
+              <button
+                type="button"
+                className="save-now-button"
+                onClick={saveSelectedNote}
+                disabled={!selectedNote || saveState === 'saving'}
+                title="立即保存"
+              >
+                <Save size={16} />
+                保存
+              </button>
+              <span className={`save-state save-state-${saveState}`}>{saveStateLabel(saveState, lastSavedAt)}</span>
+            </div>
             <button type="button" className="primary-action header-primary" onClick={runAnalysis}>
               <Sparkles size={17} />
               AI 收纳
@@ -916,6 +999,13 @@ function importTopic(sourceType: ImportResult['sourceType']) {
 
 function mergeTags(currentTags: string[], nextTags: string[]) {
   return Array.from(new Set([...currentTags, ...nextTags].map((tag) => tag.trim()).filter(Boolean))).slice(0, 8)
+}
+
+function saveStateLabel(state: 'saved' | 'dirty' | 'saving' | 'error', lastSavedAt: string) {
+  if (state === 'dirty') return '有未保存更改'
+  if (state === 'saving') return '正在保存'
+  if (state === 'error') return '保存失败'
+  return lastSavedAt ? `已保存 ${lastSavedAt}` : '已保存'
 }
 
 function SourceTraceBar({ note }: { note: Note }) {
