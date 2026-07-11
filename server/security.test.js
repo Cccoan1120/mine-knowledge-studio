@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { safeFetchExternal } from './import/safeFetch.js'
+import { safeFetchExternal, validateExternalUrl } from './import/safeFetch.js'
 import { validateProductionConfig } from './security.js'
 
 const originalEnvironment = {
@@ -42,6 +42,10 @@ describe('external request protection', () => {
     'http://user:password@example.com/',
   ])('rejects unsafe external url %s', async (url) => {
     await expect(safeFetchExternal(url)).rejects.toMatchObject({ status: 400 })
+  })
+
+  it('rejects a private target before a media parser can receive it', async () => {
+    await expect(validateExternalUrl('http://127.0.0.1/path/bilibili.com/video')).rejects.toMatchObject({ status: 400 })
   })
 })
 

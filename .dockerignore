@@ -1,0 +1,15 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+node_modules
+dist
+coverage
+logs
+*.log
+tmp
+resume_extract.txt
+resume_source.pdf
+codex-*.png
+mine-*.png

@@ -158,6 +158,7 @@ describe('external content extractors', () => {
       expect(args).toContain('--cookies')
       expect(args).toContain(cookiesFile)
       expect(args).toContain('--socket-timeout')
+      expect(args).toContain('--no-playlist')
     } finally {
       delete process.env.MINE_YTDLP_COOKIES
     }

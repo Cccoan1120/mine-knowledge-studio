@@ -35,7 +35,24 @@ export type AIAnalysis = {
 export type AnswerResult = {
   answer: string
   sourceIds: string[]
+  citations: Citation[]
   insufficient: boolean
+  mode: AIResultMode
+}
+
+export type Citation = {
+  noteId: string
+  title: string
+  quote: string
+  sourceUrl: string
+}
+
+export type AIResultMode = 'model' | 'fallback'
+
+export type GeneratedResult = {
+  markdown: string
+  citations: Citation[]
+  mode: AIResultMode
 }
 
 export type OutputType =

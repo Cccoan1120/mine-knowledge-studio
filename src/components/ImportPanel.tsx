@@ -292,7 +292,6 @@ function ImportReadiness({
   capabilities: ImportCapabilities | null
 }) {
   const ytDlpReady = capabilities?.ytDlpAvailable
-  const authReady = capabilities?.authConfigured
   const transcriptionConfigured = Boolean(capabilities?.transcriptionConfigured)
 
   return (
@@ -303,14 +302,12 @@ function ImportReadiness({
       </div>
       <ul>
         <li className={ytDlpReady ? 'is-ready' : 'needs-setup'}>
-          视频解析：{capabilities ? (ytDlpReady ? '可尝试' : '需安装 yt-dlp') : '检测中'}
-        </li>
-        <li className={authReady ? 'is-ready' : 'needs-setup'}>
-          平台登录态：{capabilities ? (authReady ? '已配置' : '未配置') : '检测中'}
+          公开内容解析：{capabilities ? (ytDlpReady ? '可尝试字幕和公开信息' : '使用链接卡片兜底') : '检测中'}
         </li>
         <li className={transcriptionConfigured ? 'is-ready' : 'needs-setup'}>
-          音频转写：{transcriptionConfigured ? '已配置' : '未配置 API Key'}
+          音频转写：{transcriptionConfigured ? '可用' : '尚未配置'}
         </li>
+        <li className="is-ready">手动补充：支持上传音视频或粘贴文稿</li>
       </ul>
     </div>
   )

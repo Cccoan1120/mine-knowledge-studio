@@ -126,7 +126,7 @@ export function createImportApp(options = {}) {
     const notes = await store.listNotes(request.user.id)
     const requestedIds = new Set(validateNoteIds(request.body?.noteIds))
     const sourceNotes = requestedIds.size ? notes.filter((note) => requestedIds.has(note.id)) : notes
-    response.json({ markdown: await generateOutput(validateOutputType(request.body?.type), sourceNotes.slice(0, 8)) })
+    response.json({ result: await generateOutput(validateOutputType(request.body?.type), sourceNotes) })
   })
 
   app.use('/api/import', requireAuth, importRateLimit)

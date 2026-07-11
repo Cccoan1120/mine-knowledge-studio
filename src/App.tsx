@@ -22,7 +22,7 @@ import { analyzeNote, answerQuestion, generateOutput, getPlatformAICapabilities,
 import { getCurrentUser, login, logout, register } from './services/authService'
 import { bulkImportNotes, createNote as createCloudNote, deleteNote as deleteCloudNote, listNotes, updateNote as updateCloudNote } from './services/noteService'
 import { loadLocalNotesForMigration, markLocalNotesMigrated } from './services/storage'
-import type { AnswerResult, CurrentUser, ImportResult, Note, OutputType } from './types'
+import type { AnswerResult, Citation, CurrentUser, GeneratedResult, ImportResult, Note, OutputType } from './types'
 import { extractTitle, parseMarkdownToNote, serializeNoteToMarkdown } from './utils/markdown'
 
 type DirectoryHandle = {
@@ -76,7 +76,9 @@ function App() {
   const [question, setQuestion] = useState('我收集过哪些关于素材复用和内容输出的观点？')
   const [answer, setAnswer] = useState<AnswerResult | null>(null)
   const [outputType, setOutputType] = useState<OutputType>('outline')
-  const [generatedOutput, setGeneratedOutput] = useState('')
+  const [generatedResult, setGeneratedResult] = useState<GeneratedResult | null>(null)
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([])
+  const [focusRequest, setFocusRequest] = useState<{ noteId: string; quote: string; token: number } | null>(null)
   const [busy, setBusy] = useState('')
   const [status, setStatus] = useState('请登录后开始使用你的专属素材库。')
   const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving' | 'error'>('saved')
@@ -132,6 +134,21 @@ function App() {
   useEffect(() => localStorage.setItem(assistantWidthKey, String(assistantWidth)), [assistantWidth])
   useEffect(() => localStorage.setItem(assistantVisibleKey, String(showAssistant)), [showAssistant])
   useEffect(() => localStorage.setItem(libraryVisibleKey, String(showLibrary)), [showLibrary])
+  useEffect(() => {
+    if (!selectedNote) {
+      setSelectedSourceIds([])
+      return
+    }
+    setSelectedSourceIds((current) => {
+      const available = current.filter((id) => notes.some((note) => note.id === id))
+      const next = available.includes(selectedNote.id)
+        ? available
+        : Array.from(new Set([selectedNote.id, ...selectedNote.relatedNoteIds]))
+            .filter((id) => notes.some((note) => note.id === id))
+            .slice(0, 20)
+      return next.length === current.length && next.every((id, index) => id === current[index]) ? current : next
+    })
+  }, [selectedNote, notes])
   useEffect(() => {
     if (!selectedNote || editorMarkdown === selectedNote.content) return
     const updatedAt = new Date().toISOString()
@@ -322,7 +339,7 @@ function App() {
     await persistCloudSave(selectedNote.id, patch)
   }
 
-  async function createNote(content = '') {
+  async function createNote(content = '', relatedNoteIds: string[] = []) {
     const now = new Date().toISOString()
     const title = extractTitle(content, '未命名素材')
     const note = await createCloudNote({
@@ -334,7 +351,7 @@ function App() {
       source: '手动创建',
       createdAt: now,
       updatedAt: now,
-      relatedNoteIds: [],
+      relatedNoteIds,
     })
 
     setNotes((current) => [note, ...current])
@@ -451,6 +468,8 @@ function App() {
         relatedNoteIds: analysis.relatedNotes.map((item) => item.id),
       })
       setStatus(`已整理「${analysis.titleSuggestion}」：${analysis.reasoning}`)
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '平台 AI 暂时不可用。')
     } finally {
       setBusy('')
     }
@@ -462,32 +481,60 @@ function App() {
     setBusy('question')
 
     try {
-      const result = await answerQuestion(question, notes)
+      const sourceNotes = notes.filter((note) => selectedSourceIds.includes(note.id))
+      const result = await answerQuestion(question, sourceNotes.length ? sourceNotes : selectedNote ? [selectedNote] : notes)
       setAnswer(result)
-      setStatus(result.insufficient ? '素材库信息不足，AI 已给出缺口提示。' : 'AI 已基于来源素材完成回答。')
+      setStatus(
+        result.insufficient
+          ? '当前所选来源不足，已给出缺口提示。'
+          : result.mode === 'model'
+            ? '平台模型已基于可验证来源完成回答。'
+            : '平台模型未配置，已使用本地规则生成带来源回答。',
+      )
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '平台 AI 暂时不可用。')
     } finally {
       setBusy('')
     }
   }
 
   async function createOutput() {
-    const sourceNotes = visibleNotes.length ? visibleNotes : notes
+    const selectedSources = notes.filter((note) => selectedSourceIds.includes(note.id))
+    const sourceNotes = selectedSources.length ? selectedSources : visibleNotes.length ? visibleNotes : notes
     setActiveAssistantTab('output')
     setBusy('output')
 
     try {
-      const markdown = await generateOutput(outputType, sourceNotes.slice(0, 8))
-      setGeneratedOutput(markdown)
-      setStatus('已生成可保存的 Markdown 输出。')
+      const result = await generateOutput(outputType, sourceNotes)
+      setGeneratedResult(result)
+      setStatus(result.mode === 'model' ? '平台模型已生成带来源输出。' : '已使用本地规则生成带来源输出。')
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '平台 AI 暂时不可用。')
     } finally {
       setBusy('')
     }
   }
 
   async function saveOutputAsNote() {
-    if (!generatedOutput.trim()) return
-    await createNote(generatedOutput)
+    if (!generatedResult?.markdown.trim()) return
+    await createNote(generatedResult.markdown, generatedResult.citations.map((citation) => citation.noteId))
     setStatus('已把输出结果保存为新素材。')
+  }
+
+  function toggleSource(noteId: string) {
+    setSelectedSourceIds((current) => {
+      if (current.includes(noteId)) return current.filter((id) => id !== noteId)
+      if (current.length >= 20) {
+        setStatus('一次最多选择 20 条来源素材。')
+        return current
+      }
+      return [...current, noteId]
+    })
+  }
+
+  function openCitation(citation: Citation) {
+    setSelectedId(citation.noteId)
+    setFocusRequest({ noteId: citation.noteId, quote: citation.quote, token: Date.now() })
   }
 
   function downloadSelectedNote() {
@@ -776,7 +823,12 @@ function App() {
               onChange={(content) => updateSelectedNote({ content })}
             >
               <Suspense fallback={<div className="document-loading">正在加载编辑器...</div>}>
-                <RichMarkdownEditor markdown={editorMarkdown} onChange={(content) => updateSelectedNote({ content })} />
+                <RichMarkdownEditor
+                  markdown={editorMarkdown}
+                  onChange={(content) => updateSelectedNote({ content })}
+                  focusText={focusRequest?.noteId === selectedNote.id ? focusRequest.quote : ''}
+                  focusToken={focusRequest?.token}
+                />
               </Suspense>
             </EditorErrorBoundary>
           </article>
@@ -811,18 +863,21 @@ function App() {
             onCollapse={() => setShowAssistant(false)}
             note={selectedNote}
             notes={notes}
+            selectedSourceIds={selectedSourceIds}
+            onToggleSource={toggleSource}
             question={question}
             setQuestion={setQuestion}
             answer={answer}
             outputType={outputType}
             setOutputType={setOutputType}
-            generatedOutput={generatedOutput}
+            generatedResult={generatedResult}
             busy={busy}
             onAnalyze={runAnalysis}
             onAsk={askKnowledgeBase}
             onGenerate={createOutput}
             onSaveOutput={saveOutputAsNote}
             onSelectNote={setSelectedId}
+            onOpenCitation={openCitation}
           />
         </Suspense>
       ) : showAssistant ? (

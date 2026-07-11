@@ -38,6 +38,14 @@ Start command: pnpm start
 Health check path: /api/health
 ```
 
+### Docker runtime for media imports
+
+The repository also includes a production `Dockerfile` with Node 24, ffmpeg, and a pinned public-media parser. After the GitHub Docker CI job passes, the existing Render service can be switched to Docker runtime without changing its service name, URL, Neon database, or environment variables.
+
+Keep the current native Node runtime active until the Docker build is green. If Render does not allow an in-place runtime change, keep the existing service running instead of creating a second public service.
+
+The public importer only attempts publicly accessible metadata, captions, and audio. It does not bypass private, paid, login-protected, captcha-protected, or platform-restricted content. Media downloads and transcription are limited to one task at a time and 50 MB per task.
+
 Render should provide `PORT`. Mine listens on `0.0.0.0` in production and serves the React app from `dist/`.
 
 Required environment variables:

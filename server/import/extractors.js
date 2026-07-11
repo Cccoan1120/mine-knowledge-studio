@@ -1,14 +1,17 @@
 import { Readability } from '@mozilla/readability'
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { JSDOM } from 'jsdom'
 import TurndownService from 'turndown'
-import { safeFetchExternal } from './safeFetch.js'
+import { safeFetchExternal, validateExternalUrl } from './safeFetch.js'
 
 const execFileAsync = promisify(execFile)
+const maxMediaBytes = 50 * 1024 * 1024
+let mediaTaskActive = false
+const mediaTaskWaiters = []
 const userAgent =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36 MineImporter/0.1'
 
@@ -33,6 +36,9 @@ export async function getImportCapabilities() {
 export async function extractFromUrl({ url, aiConfig = {} }) {
   const normalizedUrl = normalizeUrl(url)
   if (!normalizedUrl) return failed('请输入有效链接。')
+  await validateExternalUrl(normalizedUrl, {
+    allowPrivate: process.env.NODE_ENV === 'test' && process.env.MINE_ALLOW_PRIVATE_IMPORTS === '1',
+  })
 
   const resolvedUrl = shouldResolveUrl(normalizedUrl) ? await resolveUrl(normalizedUrl) : normalizedUrl
 
@@ -326,7 +332,7 @@ export async function extractMedia({ file, aiConfig = {} }) {
     }
   }
 
-  const text = await transcribeBuffer(file.buffer, file.originalname, file.mimetype, aiConfig)
+  const text = await withMediaSlot(() => transcribeBuffer(file.buffer, file.originalname, file.mimetype, aiConfig))
   return ready({
     sourceType: file.mimetype?.startsWith('audio/') ? 'podcast' : 'video',
     platform: '本地媒体',
@@ -609,14 +615,16 @@ async function extractAudioUrl(url, aiConfig) {
 }
 
 async function transcribeRemoteAudio(url, aiConfig) {
-  const response = await safeFetchExternal(url, {
-    headers: { 'User-Agent': userAgent },
-    timeoutMs: 60_000,
-    maxBytes: 50 * 1024 * 1024,
+  return withMediaSlot(async () => {
+    const response = await safeFetchExternal(url, {
+      headers: { 'User-Agent': userAgent },
+      timeoutMs: 60_000,
+      maxBytes: maxMediaBytes,
+    })
+    if (!response.ok) throw new Error(`音频下载返回 ${response.status}`)
+    const buffer = Buffer.from(await response.arrayBuffer())
+    return transcribeBuffer(buffer, fileNameFromUrl(url) || 'podcast.mp3', response.headers.get('content-type') || 'audio/mpeg', aiConfig)
   })
-  if (!response.ok) throw new Error(`音频下载返回 ${response.status}`)
-  const buffer = Buffer.from(await response.arrayBuffer())
-  return transcribeBuffer(buffer, fileNameFromUrl(url) || 'podcast.mp3', response.headers.get('content-type') || 'audio/mpeg', aiConfig)
 }
 
 async function readPageMetadata(url) {
@@ -773,25 +781,32 @@ async function readBestCaption(info) {
 
 async function tryTranscribeVideo(url, aiConfig) {
   if (!hasTranscriptionConfig(aiConfig)) return ''
-  const tempDir = await mkdtemp(join(tmpdir(), 'mine-video-'))
+  return withMediaSlot(async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'mine-video-'))
 
-  try {
-    const outputTemplate = join(tempDir, 'audio.%(ext)s')
-    await execFileAsync('yt-dlp', createYtDlpArgs(['-f', 'ba', '-o', outputTemplate, '--no-warnings', url]), {
-      timeout: 120000,
-      maxBuffer: 1024 * 1024 * 4,
-    })
-    const files = await readdir(tempDir)
-    const audioName = files.find((name) => name.startsWith('audio.'))
-    if (!audioName) return ''
-    const audioPath = join(tempDir, audioName)
-    const buffer = await readFile(audioPath)
-    return transcribeBuffer(buffer, audioName, 'audio/mpeg', aiConfig)
-  } catch {
-    return ''
-  } finally {
-    await rm(tempDir, { recursive: true, force: true })
-  }
+    try {
+      const outputTemplate = join(tempDir, 'audio.%(ext)s')
+      await execFileAsync(
+        'yt-dlp',
+        createYtDlpArgs(['-f', 'ba', '--max-filesize', '50M', '-o', outputTemplate, '--no-warnings', url]),
+        {
+          timeout: 120000,
+          maxBuffer: 1024 * 1024 * 4,
+        },
+      )
+      const files = await readdir(tempDir)
+      const audioName = files.find((name) => name.startsWith('audio.'))
+      if (!audioName) return ''
+      const audioPath = join(tempDir, audioName)
+      if ((await stat(audioPath)).size > maxMediaBytes) return ''
+      const buffer = await readFile(audioPath)
+      return transcribeBuffer(buffer, audioName, 'audio/mpeg', aiConfig)
+    } catch {
+      return ''
+    } finally {
+      await rm(tempDir, { recursive: true, force: true })
+    }
+  })
 }
 
 async function transcribeBuffer(buffer, fileName, mimeType, aiConfig) {
@@ -1001,7 +1016,18 @@ export function createYtDlpArgs(args) {
       ? ['--cookies-from-browser', browser]
       : []
 
-  return [...authArgs, '--socket-timeout', '10', ...args]
+  return [...authArgs, '--no-playlist', '--socket-timeout', '10', ...args]
+}
+
+async function withMediaSlot(task) {
+  if (mediaTaskActive) await new Promise((resolve) => mediaTaskWaiters.push(resolve))
+  mediaTaskActive = true
+  try {
+    return await task()
+  } finally {
+    mediaTaskActive = false
+    mediaTaskWaiters.shift()?.()
+  }
 }
 
 function ytDlpTimeout(defaultTimeout) {

@@ -1,7 +1,7 @@
 import { Bot, FileText, Loader2, MessageSquareText, PanelRightClose, Save, Sparkles } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { AnswerResult, Note, OutputType } from '../types'
+import type { AnswerResult, Citation, GeneratedResult, Note, OutputType } from '../types'
 
 type AssistantPanelProps = {
   width: number
@@ -11,18 +11,21 @@ type AssistantPanelProps = {
   onCollapse: () => void
   note: Note | undefined
   notes: Note[]
+  selectedSourceIds: string[]
+  onToggleSource: (id: string) => void
   question: string
   setQuestion: (value: string) => void
   answer: AnswerResult | null
   outputType: OutputType
   setOutputType: (value: OutputType) => void
-  generatedOutput: string
+  generatedResult: GeneratedResult | null
   busy: string
   onAnalyze: () => void
   onAsk: () => void
   onGenerate: () => void
   onSaveOutput: () => void
   onSelectNote: (id: string) => void
+  onOpenCitation: (citation: Citation) => void
 }
 
 export function AssistantPanel({
@@ -33,18 +36,21 @@ export function AssistantPanel({
   onCollapse,
   note,
   notes,
+  selectedSourceIds,
+  onToggleSource,
   question,
   setQuestion,
   answer,
   outputType,
   setOutputType,
-  generatedOutput,
+  generatedResult,
   busy,
   onAnalyze,
   onAsk,
   onGenerate,
   onSaveOutput,
   onSelectNote,
+  onOpenCitation,
 }: AssistantPanelProps) {
   return (
     <aside className="assistant-panel" style={{ width }} aria-label="Mine Copilot">
@@ -74,6 +80,22 @@ export function AssistantPanel({
           输出
         </button>
       </div>
+
+      <details className="source-picker">
+        <summary>引用来源 <span>{selectedSourceIds.length}/20</span></summary>
+        <div>
+          {notes.map((source) => (
+            <label key={source.id}>
+              <input
+                type="checkbox"
+                checked={selectedSourceIds.includes(source.id)}
+                onChange={() => onToggleSource(source.id)}
+              />
+              <span>{source.title}</span>
+            </label>
+          ))}
+        </div>
+      </details>
 
       {activeTab === 'organize' ? (
         <section className="assistant-section">
@@ -127,16 +149,17 @@ export function AssistantPanel({
           </button>
           {answer ? (
             <div className="answer-box">
+              <span className={`result-mode result-mode-${answer.mode}`}>
+                {answer.mode === 'model' ? '平台模型生成' : '本地规则生成'}
+              </span>
               <p>{answer.answer}</p>
-              <div className="source-list">
-                {answer.sourceIds.map((id) => {
-                  const source = notes.find((item) => item.id === id)
-                  return source ? (
-                    <button type="button" key={id} onClick={() => onSelectNote(id)}>
-                      {source.title}
-                    </button>
-                  ) : null
-                })}
+              <div className="citation-list">
+                {answer.citations.map((citation) => (
+                  <button type="button" key={`${citation.noteId}-${citation.quote}`} onClick={() => onOpenCitation(citation)}>
+                    <strong>{citation.title}</strong>
+                    <span>“{citation.quote}”</span>
+                  </button>
+                ))}
               </div>
             </div>
           ) : null}
@@ -157,9 +180,20 @@ export function AssistantPanel({
             {busy === 'output' ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />}
             基于当前列表生成
           </button>
-          {generatedOutput ? (
+          {generatedResult ? (
             <div className="output-box">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{generatedOutput}</ReactMarkdown>
+              <span className={`result-mode result-mode-${generatedResult.mode}`}>
+                {generatedResult.mode === 'model' ? '平台模型生成' : '本地规则生成'}
+              </span>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{generatedResult.markdown}</ReactMarkdown>
+              <div className="citation-list">
+                {generatedResult.citations.map((citation) => (
+                  <button type="button" key={citation.noteId} onClick={() => onOpenCitation(citation)}>
+                    <strong>{citation.title}</strong>
+                    <span>“{citation.quote}”</span>
+                  </button>
+                ))}
+              </div>
               <button type="button" onClick={onSaveOutput}>
                 <Save size={16} />
                 保存为新素材

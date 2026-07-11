@@ -31,6 +31,8 @@ describe('auth api', () => {
 
     expect(session.user.email).toBe('owner@example.com')
     expect(session.cookie).toContain('mine_session=')
+    expect(session.cookie).toContain('HttpOnly')
+    expect(session.cookie).toContain('SameSite=Lax')
 
     const meResponse = await fetch(`${apiUrl}/api/auth/me`, { headers: authHeaders(session.cookie) })
     const me = await meResponse.json()
@@ -59,6 +61,26 @@ describe('auth api', () => {
     const logout = await fetch(`${apiUrl}/api/auth/logout`, { method: 'POST' })
     expect(logout.ok).toBe(true)
     expect(logout.headers.get('set-cookie')).toContain('Max-Age=0')
+  })
+
+  it('rate limits repeated authentication attempts', async () => {
+    const apiUrl = await serveApp()
+    const email = `rate-${Date.now()}@example.com`
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      await fetch(`${apiUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: 'wrong-password' }),
+      })
+    }
+
+    const limited = await fetch(`${apiUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: 'wrong-password' }),
+    })
+    expect(limited.status).toBe(429)
   })
 })
 
@@ -138,6 +160,20 @@ describe('notes api', () => {
       body: JSON.stringify({ notes: Array.from({ length: 101 }, (_, index) => ({ title: `素材 ${index}` })) }),
     })
     expect(bulk.status).toBe(400)
+  })
+
+  it('rejects cross-site mutations', async () => {
+    const apiUrl = await serveApp()
+    const session = await registerSession(apiUrl, 'csrf@example.com')
+    const response = await fetch(`${apiUrl}/api/notes`, {
+      method: 'POST',
+      headers: authHeaders(session.cookie, {
+        'Content-Type': 'application/json',
+        Origin: 'https://attacker.example',
+      }),
+      body: JSON.stringify({ title: '不应创建', content: '' }),
+    })
+    expect(response.status).toBe(403)
   })
 })
 
@@ -261,6 +297,44 @@ describe('import api', () => {
     expect(response.status).toBe(415)
     expect(result.status).toBe('failed')
     expect(result.requestId).toBeTruthy()
+  })
+})
+
+describe('AI citations', () => {
+  it('returns verified fallback citations only from the current user sources', async () => {
+    const apiUrl = await serveApp()
+    const owner = await registerSession(apiUrl, 'citation-owner@example.com')
+    const other = await registerSession(apiUrl, 'citation-other@example.com')
+    const createdResponse = await fetch(`${apiUrl}/api/notes`, {
+      method: 'POST',
+      headers: authHeaders(owner.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        title: '素材复用方法',
+        content: '素材复用需要保留来源证据，并把观点连接到原始内容。',
+        summary: '素材复用需要来源证据。',
+        tags: ['素材复用', '来源'],
+      }),
+    })
+    const created = await createdResponse.json()
+
+    const ownerResponse = await fetch(`${apiUrl}/api/ai/ask`, {
+      method: 'POST',
+      headers: authHeaders(owner.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ question: '素材复用为什么需要来源证据？', noteIds: [created.note.id] }),
+    })
+    const ownerResult = (await ownerResponse.json()).result
+    expect(ownerResult.mode).toBe('fallback')
+    expect(ownerResult.citations[0].noteId).toBe(created.note.id)
+    expect(created.note.content).toContain(ownerResult.citations[0].quote)
+
+    const otherResponse = await fetch(`${apiUrl}/api/ai/ask`, {
+      method: 'POST',
+      headers: authHeaders(other.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ question: '素材复用为什么需要来源证据？', noteIds: [created.note.id] }),
+    })
+    const otherResult = (await otherResponse.json()).result
+    expect(otherResult.citations).toEqual([])
+    expect(otherResult.sourceIds).toEqual([])
   })
 })
 

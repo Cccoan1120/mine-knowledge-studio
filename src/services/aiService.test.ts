@@ -65,6 +65,8 @@ describe('AI service proxy', () => {
 
     expect(result.insufficient).toBe(false)
     expect(result.sourceIds.length).toBeGreaterThan(0)
+    expect(result.citations[0].quote.length).toBeGreaterThan(0)
+    expect(result.mode).toBe('fallback')
     expect(result.answer).toContain('素材')
   })
 
@@ -82,21 +84,26 @@ describe('AI service proxy', () => {
 
     const output = await generateOutput('outline', demoNotes.slice(0, 2))
 
-    expect(output).toContain('# 文章大纲')
-    expect(output).toContain('来源引用')
+    expect(output.markdown).toContain('# 文章大纲')
+    expect(output.markdown).toContain('来源引用')
+    expect(output.citations).toHaveLength(2)
+    expect(output.mode).toBe('fallback')
   })
 
   it('uses server-generated markdown output when available', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () =>
-        new Response(JSON.stringify({ markdown: '# 服务端大纲\n\n- 可发布内容' }), {
+        new Response(JSON.stringify({ result: { markdown: '# 服务端大纲\n\n- 可发布内容', citations: [], mode: 'model' } }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         }),
       ),
     )
 
-    await expect(generateOutput('outline', demoNotes.slice(0, 2))).resolves.toContain('服务端大纲')
+    await expect(generateOutput('outline', demoNotes.slice(0, 2))).resolves.toMatchObject({
+      markdown: expect.stringContaining('服务端大纲'),
+      mode: 'model',
+    })
   })
 })

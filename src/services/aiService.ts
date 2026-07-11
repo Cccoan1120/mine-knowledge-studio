@@ -1,4 +1,4 @@
-import type { AIAnalysis, AnswerResult, Note, OutputType } from '../types'
+import type { AIAnalysis, AnswerResult, Citation, GeneratedResult, Note, OutputType } from '../types'
 import { extractTitle } from '../utils/markdown'
 
 export type PlatformAICapabilities = {
@@ -32,9 +32,11 @@ export async function analyzeNote(note: Note, existingNotes: Note[]): Promise<AI
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ noteId: note.id }),
     })
+    if (!response.ok) throw await responseError(response)
     const data = (await response.json()) as { analysis?: AIAnalysis }
     return data.analysis ?? mockAnalyzeNote(note, existingNotes)
-  } catch {
+  } catch (error) {
+    if (error instanceof ServerAIError) throw error
     return mockAnalyzeNote(note, existingNotes)
   }
 }
@@ -44,25 +46,29 @@ export async function answerQuestion(question: string, notes: Note[]): Promise<A
     const response = await fetch('/api/ai/ask', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ question, noteIds: notes.slice(0, 20).map((note) => note.id) }),
     })
+    if (!response.ok) throw await responseError(response)
     const data = (await response.json()) as { result?: AnswerResult }
     return data.result ?? mockAnswerQuestion(question, notes)
-  } catch {
+  } catch (error) {
+    if (error instanceof ServerAIError) throw error
     return mockAnswerQuestion(question, notes)
   }
 }
 
-export async function generateOutput(type: OutputType, notes: Note[]): Promise<string> {
+export async function generateOutput(type: OutputType, notes: Note[]): Promise<GeneratedResult> {
   try {
     const response = await fetch('/api/ai/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type, noteIds: notes.map((note) => note.id) }),
     })
-    const data = (await response.json()) as { markdown?: string }
-    return data.markdown || mockGenerateOutput(type, notes)
-  } catch {
+    if (!response.ok) throw await responseError(response)
+    const data = (await response.json()) as { result?: GeneratedResult }
+    return data.result ?? mockGenerateOutput(type, notes)
+  } catch (error) {
+    if (error instanceof ServerAIError) throw error
     return mockGenerateOutput(type, notes)
   }
 }
@@ -113,18 +119,23 @@ function mockAnswerQuestion(question: string, notes: Note[]): AnswerResult {
     return {
       answer: '现有素材库里没有足够信息回答这个问题。可以先导入相关素材，或换一个更贴近当前素材的问题。',
       sourceIds: [],
+      citations: [],
       insufficient: true,
+      mode: 'fallback',
     }
   }
 
+  const citations = scored.map(({ note }) => citationFromNote(note))
   return {
     answer: scored.map(({ note }) => `从「${note.title}」看：${note.summary || summarize(note.content)}`).join('\n\n'),
-    sourceIds: scored.map(({ note }) => note.id),
+    sourceIds: citations.map((citation) => citation.noteId),
+    citations,
     insufficient: false,
+    mode: 'fallback',
   }
 }
 
-function mockGenerateOutput(type: OutputType, notes: Note[]) {
+function mockGenerateOutput(type: OutputType, notes: Note[]): GeneratedResult {
   const titleMap = {
     outline: '文章大纲',
     'idea-card': '选题卡',
@@ -136,7 +147,11 @@ function mockGenerateOutput(type: OutputType, notes: Note[]) {
   const sections = notes
     .map((note, index) => `${index + 1}. ${note.title}\n   - ${note.summary || summarize(note.content)}`)
     .join('\n')
-  return `# ${titleMap[type]}\n\n## 关键素材\n${sections}\n\n## 来源引用\n${notes.map((note) => `- ${note.title}${sourceFromNote(note) ? `：${sourceFromNote(note)}` : ''}`).join('\n')}\n`
+  return {
+    markdown: `# ${titleMap[type]}\n\n## 关键素材\n${sections}\n\n## 来源引用\n${notes.map((note) => `- ${note.title}${sourceFromNote(note) ? `：${sourceFromNote(note)}` : ''}`).join('\n')}\n`,
+    citations: notes.map(citationFromNote),
+    mode: 'fallback',
+  }
 }
 
 function summarize(content: string) {
@@ -171,4 +186,29 @@ function sourceFromNote(note: Note) {
     note.source ||
     ''
   )
+}
+
+function citationFromNote(note: Note): Citation {
+  const source = sourceFromNote(note)
+  const withoutTitle = note.content.replace(/^#\s+.+\r?\n+/, '')
+  return {
+    noteId: note.id,
+    title: note.title,
+    quote: (withoutTitle.trim() || note.content.trim()).slice(0, 220),
+    sourceUrl: /^https?:\/\//.test(source) ? source : '',
+  }
+}
+
+async function responseError(response: Response) {
+  const data = (await response.json().catch(() => ({}))) as { error?: string; requestId?: string }
+  return new ServerAIError(data.error || '平台 AI 暂时不可用。', data.requestId)
+}
+
+class ServerAIError extends Error {
+  requestId?: string
+
+  constructor(message: string, requestId?: string) {
+    super(requestId ? `${message}（请求编号：${requestId}）` : message)
+    this.requestId = requestId
+  }
 }

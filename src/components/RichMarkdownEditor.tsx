@@ -10,17 +10,26 @@ import {
   Redo2,
   Undo2,
 } from 'lucide-react'
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 
 type RichMarkdownEditorProps = {
   markdown: string
   onChange: (markdown: string) => void
+  focusText?: string
+  focusToken?: number
 }
 
 type FormatAction = 'h1' | 'bold' | 'italic' | 'quote' | 'bullet' | 'number' | 'link' | 'rule'
 
-export function RichMarkdownEditor({ markdown, onChange }: RichMarkdownEditorProps) {
+export function RichMarkdownEditor({ markdown, onChange, focusText = '', focusToken }: RichMarkdownEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (!focusText) return
+    const index = markdown.indexOf(focusText)
+    if (index < 0) return
+    focusAndSelect(index, index + focusText.length)
+  }, [focusText, focusToken, markdown])
 
   function focusAndSelect(start: number, end = start) {
     requestAnimationFrame(() => {
