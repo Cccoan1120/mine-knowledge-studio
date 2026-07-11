@@ -12,10 +12,12 @@ let tempDirs = []
 
 beforeEach(() => {
   process.env.MINE_SKIP_YTDLP = '1'
+  process.env.MINE_ALLOW_PRIVATE_IMPORTS = '1'
 })
 
 afterEach(async () => {
   delete process.env.MINE_SKIP_YTDLP
+  delete process.env.MINE_ALLOW_PRIVATE_IMPORTS
   await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))))
   await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
   servers = []
@@ -117,6 +119,25 @@ describe('notes api', () => {
     expect(response.status).toBe(201)
     expect(result.notes).toHaveLength(2)
     expect(result.notes[0].id).toBeTruthy()
+  })
+
+  it('rejects oversized note fields and excessive bulk imports', async () => {
+    const apiUrl = await serveApp()
+    const session = await registerSession(apiUrl, 'limits@example.com')
+
+    const oversized = await fetch(`${apiUrl}/api/notes`, {
+      method: 'POST',
+      headers: authHeaders(session.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ title: 'x'.repeat(201), content: '' }),
+    })
+    expect(oversized.status).toBe(400)
+
+    const bulk = await fetch(`${apiUrl}/api/notes/bulk`, {
+      method: 'POST',
+      headers: authHeaders(session.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ notes: Array.from({ length: 101 }, (_, index) => ({ title: `素材 ${index}` })) }),
+    })
+    expect(bulk.status).toBe(400)
   })
 })
 
@@ -222,6 +243,41 @@ describe('import api', () => {
     expect(response.ok).toBe(true)
     expect(result.status).toBe('needs-action')
     expect(result.warnings[0]).toContain('未配置')
+  })
+
+  it('rejects an uploaded file whose content does not match an image', async () => {
+    const apiUrl = await serveApp()
+    const session = await registerSession(apiUrl, 'upload@example.com')
+    const body = new FormData()
+    body.append('file', new Blob(['this is not an image'], { type: 'image/png' }), 'fake.png')
+
+    const response = await fetch(`${apiUrl}/api/import/image`, {
+      method: 'POST',
+      headers: authHeaders(session.cookie),
+      body,
+    })
+    const result = await response.json()
+
+    expect(response.status).toBe(415)
+    expect(result.status).toBe('failed')
+    expect(result.requestId).toBeTruthy()
+  })
+})
+
+describe('health api', () => {
+  it('returns 503 when the database health check fails', async () => {
+    const failingStore = {
+      healthCheck: async () => {
+        throw new Error('postgresql://user:secret@example.invalid/database')
+      },
+    }
+    const apiUrl = await serveApp({ store: failingStore })
+    const response = await fetch(`${apiUrl}/api/health`)
+    const result = await response.json()
+
+    expect(response.status).toBe(503)
+    expect(result.ok).toBe(false)
+    expect(result.requestId).toBeTruthy()
   })
 })
 

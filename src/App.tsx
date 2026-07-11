@@ -1,4 +1,4 @@
-import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import {
   Download,
   FileDown,
@@ -51,7 +51,6 @@ declare global {
 const assistantWidthKey = 'mine-assistant-width'
 const assistantVisibleKey = 'mine-assistant-visible'
 const libraryVisibleKey = 'mine-library-visible'
-const noteListVisibleKey = 'mine-note-list-visible'
 const AssistantPanel = lazy(() =>
   import('./components/AssistantPanel').then((module) => ({ default: module.AssistantPanel })),
 )
@@ -87,7 +86,6 @@ function App() {
   const [showImportPanel, setShowImportPanel] = useState(false)
   const [localMigrationNotes, setLocalMigrationNotes] = useState<Note[]>([])
   const [showLibrary, setShowLibrary] = useState(() => localStorage.getItem(libraryVisibleKey) !== 'false')
-  const [showNoteList, setShowNoteList] = useState(() => localStorage.getItem(noteListVisibleKey) !== 'false')
   const [showAssistant, setShowAssistant] = useState(() => localStorage.getItem(assistantVisibleKey) !== 'false')
   const [showGraph, setShowGraph] = useState(false)
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
@@ -117,12 +115,6 @@ function App() {
     })
   }, [notes, search, selectedTag])
 
-  const gridColumns = [
-    showLibrary ? '232px' : '56px',
-    showNoteList ? '304px' : '48px',
-    'minmax(0, 1fr)',
-    showAssistant ? `${assistantWidth}px` : '48px',
-  ].join(' ')
   const editorMarkdown = selectedNote ? removeLeadingTitleHeading(selectedNote.content, selectedNote.title) : ''
 
   useEffect(() => {
@@ -140,7 +132,6 @@ function App() {
   useEffect(() => localStorage.setItem(assistantWidthKey, String(assistantWidth)), [assistantWidth])
   useEffect(() => localStorage.setItem(assistantVisibleKey, String(showAssistant)), [showAssistant])
   useEffect(() => localStorage.setItem(libraryVisibleKey, String(showLibrary)), [showLibrary])
-  useEffect(() => localStorage.setItem(noteListVisibleKey, String(showNoteList)), [showNoteList])
   useEffect(() => {
     if (!selectedNote || editorMarkdown === selectedNote.content) return
     const updatedAt = new Date().toISOString()
@@ -522,7 +513,10 @@ function App() {
   }
 
   return (
-    <main className="app-shell" style={{ gridTemplateColumns: gridColumns }}>
+    <main
+      className={`app-shell ${showLibrary ? '' : 'library-collapsed'} ${showAssistant ? 'assistant-open' : 'assistant-collapsed'}`}
+      style={{ '--assistant-width': `${assistantWidth}px` } as CSSProperties}
+    >
       {showLibrary ? (
         <aside className="sidebar" aria-label="素材库导航">
           <div className="brand-block">
@@ -545,14 +539,6 @@ function App() {
               <FileDown size={17} />
               导入素材
             </button>
-            <button type="button" onClick={openLocalVault}>
-              <FolderOpen size={17} />
-              打开本地库
-            </button>
-            <button type="button" onClick={saveVault}>
-              <Save size={17} />
-              写回本地库
-            </button>
             <input
               ref={fileInputRef}
               className="hidden-input"
@@ -563,19 +549,58 @@ function App() {
             />
           </div>
 
-          <div className="topic-list">
-            <p className="panel-label">标签分类</p>
-            {tags.map((item) => (
+          <div className="search-box">
+            <Search size={16} />
+            <input value={search} placeholder="搜索素材" onChange={(event) => setSearch(event.target.value)} />
+          </div>
+
+          <div className="list-summary">
+            <strong>{selectedTag === '全部标签' ? '素材库' : `#${selectedTag}`}</strong>
+            <span>{visibleNotes.length} 条</span>
+          </div>
+
+          <div className="notes-scroll sidebar-notes">
+            {visibleNotes.map((note) => (
               <button
                 type="button"
-                key={item}
-                className={item === selectedTag ? 'is-active' : ''}
-                onClick={() => setSelectedTag(item)}
+                key={note.id}
+                className={`note-row ${note.id === selectedNote?.id ? 'is-selected' : ''}`}
+                onClick={() => setSelectedId(note.id)}
               >
-                <span>{item === '全部标签' ? '全部素材' : `#${item}`}</span>
-                <span>{item === '全部标签' ? notes.length : notes.filter((note) => note.tags.includes(item)).length}</span>
+                <strong>{note.title}</strong>
+                <span>{note.summary || note.content.replace(/\s+/g, ' ').slice(0, 76) || '空白素材'}</span>
+                <small>{note.tags.slice(0, 2).map((tag) => `#${tag}`).join('  ') || note.topic}</small>
               </button>
             ))}
+            {!visibleNotes.length ? <p className="library-empty">当前筛选下没有素材。</p> : null}
+          </div>
+
+          <details className="library-filters">
+            <summary>标签筛选</summary>
+            <div className="topic-list">
+              {tags.map((item) => (
+                <button
+                  type="button"
+                  key={item}
+                  className={item === selectedTag ? 'is-active' : ''}
+                  onClick={() => setSelectedTag(item)}
+                >
+                  <span>{item === '全部标签' ? '全部素材' : `#${item}`}</span>
+                  <span>{item === '全部标签' ? notes.length : notes.filter((note) => note.tags.includes(item)).length}</span>
+                </button>
+              ))}
+            </div>
+          </details>
+
+          <div className="utility-actions">
+            <button type="button" onClick={openLocalVault} title="打开本地 Markdown 素材库">
+              <FolderOpen size={16} />
+              打开本地库
+            </button>
+            <button type="button" onClick={saveVault} title="把素材写回已打开的本地库">
+              <Save size={16} />
+              写回本地库
+            </button>
           </div>
 
           <div className="settings-box">
@@ -615,55 +640,8 @@ function App() {
           <button type="button" onClick={() => setShowLibrary(true)} aria-label="打开素材区" title="打开素材区">
             <PanelLeftOpen size={18} />
           </button>
-          <button
-            type="button"
-            onClick={() => setShowNoteList((value) => !value)}
-            aria-label={showNoteList ? '收起素材列表' : '打开素材列表'}
-            title={showNoteList ? '收起素材列表' : '打开素材列表'}
-          >
-            {showNoteList ? <PanelLeftClose size={18} /> : <Search size={18} />}
-          </button>
           <button type="button" onClick={() => createNote()} aria-label="新建素材" title="新建素材">
             <FilePlus2 size={18} />
-          </button>
-        </aside>
-      )}
-
-      {showNoteList ? (
-        <section className="note-list" aria-label="素材列表">
-          <div className="note-list-header">
-            <div className="search-box">
-              <Search size={17} />
-              <input value={search} placeholder="搜索标题、标签、正文" onChange={(event) => setSearch(event.target.value)} />
-            </div>
-            <button type="button" onClick={() => setShowNoteList(false)} aria-label="收起素材列表" title="收起素材列表">
-              <PanelLeftClose size={17} />
-            </button>
-          </div>
-          <div className="list-summary">
-            <span>{visibleNotes.length} 条素材</span>
-            <span>{selectedTag === '全部标签' ? '全部标签' : `#${selectedTag}`}</span>
-          </div>
-          <div className="notes-scroll">
-            {visibleNotes.map((note) => (
-              <button
-                type="button"
-                key={note.id}
-                className={`note-row ${note.id === selectedNote?.id ? 'is-selected' : ''}`}
-                onClick={() => setSelectedId(note.id)}
-              >
-                <strong>{note.title}</strong>
-                <span>{note.summary || note.content.replace(/\s+/g, ' ').slice(0, 76)}</span>
-                <small>{note.tags.slice(0, 3).join(' / ') || note.topic}</small>
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : (
-        <aside className="note-list-rail" aria-label="素材列表已收起">
-          <button type="button" onClick={() => setShowNoteList(true)} aria-label="打开素材列表" title="打开素材列表">
-            <PanelLeftOpen size={17} />
-            <span>素材</span>
           </button>
         </aside>
       )}
@@ -683,14 +661,6 @@ function App() {
                 title={showLibrary ? '收起素材区' : '打开素材区'}
               >
                 {showLibrary ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowNoteList((value) => !value)}
-                aria-label={showNoteList ? '收起素材列表' : '打开素材列表'}
-                title={showNoteList ? '收起素材列表' : '打开素材列表'}
-              >
-                {showNoteList ? <PanelLeftClose size={17} /> : <Search size={17} />}
               </button>
             </div>
             <div className="save-cluster" aria-live="polite">
@@ -841,9 +811,6 @@ function App() {
             onCollapse={() => setShowAssistant(false)}
             note={selectedNote}
             notes={notes}
-            tags={tags}
-            selectedTag={selectedTag}
-            setSelectedTag={setSelectedTag}
             question={question}
             setQuestion={setQuestion}
             answer={answer}
@@ -1010,21 +977,16 @@ function saveStateLabel(state: 'saved' | 'dirty' | 'saving' | 'error', lastSaved
 
 function SourceTraceBar({ note }: { note: Note }) {
   const source = parseSourceTrace(note)
+  const details = Array.from(new Set([source.reliability, source.platform, source.importMethod].filter(Boolean)))
 
   return (
     <section className="source-trace-bar" aria-label="来源追踪">
-      <div>
-        <span>来源可信度</span>
-        <strong>{source.reliability}</strong>
-      </div>
-      <div>
-        <span>平台</span>
-        <strong>{source.platform}</strong>
-      </div>
-      <div>
-        <span>导入方式</span>
-        <strong>{source.importMethod}</strong>
-      </div>
+      {details.map((detail, index) =>
+        index === 0 ? <strong key={detail}>{detail}</strong> : <span key={detail}>{detail}</span>,
+      )}
+      {/^https?:\/\//.test(source.sourceUrl) ? (
+        <a href={source.sourceUrl} target="_blank" rel="noreferrer">查看原文</a>
+      ) : null}
     </section>
   )
 }
@@ -1035,6 +997,7 @@ function parseSourceTrace(note: Note) {
     platform: content.match(/^- 平台：(.+)$/m)?.[1]?.trim() || note.source || '未知来源',
     importMethod: content.match(/^- 导入方式：(.+)$/m)?.[1]?.trim() || '手动创建',
     reliability: content.match(/^- 来源可信度：(.+)$/m)?.[1]?.trim() || sourceReliabilityFromNote(note),
+    sourceUrl: content.match(/^- 原始来源：(https?:\/\/\S+)$/m)?.[1]?.trim() || (/^https?:\/\//.test(note.source) ? note.source : ''),
   }
 }
 

@@ -2,51 +2,69 @@ import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import express from 'express'
+import helmet from 'helmet'
 import multer from 'multer'
 import { clearSessionCookie, loginUser, registerUser, requireAuth, setSessionCookie } from './auth.js'
 import { getAICapabilities, getPlatformAIConfig } from './ai/config.js'
 import { analyzeNote, answerQuestion, generateOutput } from './ai/service.js'
 import { extractFromUrl, extractImage, extractMedia, getImportCapabilities } from './import/extractors.js'
+import { aiRateLimit, authRateLimit, importRateLimit, logServerError, publicError, requestContext, requireSameOrigin } from './security.js'
 import { createDefaultStore } from './store/index.js'
+import { assertUpload, validateBulkNotes, validateImportUrl, validateNoteIds, validateNoteInput, validateOutputType, validateQuestion } from './validation.js'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const projectRoot = resolve(currentDir, '..')
 
 export function createImportApp(options = {}) {
   const app = express()
-  const upload = multer({
+  const imageUpload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: 60 * 1024 * 1024 },
+    limits: { fileSize: 12 * 1024 * 1024, files: 1 },
+  })
+  const mediaUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 50 * 1024 * 1024, files: 1 },
   })
   const store = options.store || createDefaultStore()
 
-  app.use(express.json({ limit: '12mb' }))
+  app.set('trust proxy', 1)
+  app.disable('x-powered-by')
+  app.use(helmet())
+  app.use(requestContext)
+  app.use(express.json({ limit: '2mb', type: 'application/json' }))
+  app.use('/api', requireSameOrigin)
   app.use((request, _response, next) => {
     request.store = store
     next()
   })
 
-  app.get('/api/health', (_request, response) => {
-    response.json({ ok: true })
+  app.get('/api/health', async (request, response) => {
+    try {
+      await store.healthCheck()
+      response.json({ ok: true })
+    } catch (error) {
+      logServerError(error, request.requestId)
+      response.status(503).json({ ok: false, requestId: request.requestId })
+    }
   })
 
-  app.post('/api/auth/register', async (request, response) => {
+  app.post('/api/auth/register', authRateLimit, async (request, response) => {
     try {
       const user = await registerUser(store, request.body)
       await setSessionCookie(response, user)
       response.status(201).json({ user })
     } catch (error) {
-      sendError(response, error)
+      sendError(request, response, error)
     }
   })
 
-  app.post('/api/auth/login', async (request, response) => {
+  app.post('/api/auth/login', authRateLimit, async (request, response) => {
     try {
       const user = await loginUser(store, request.body)
       await setSessionCookie(response, user)
       response.json({ user })
     } catch (error) {
-      sendError(response, error)
+      sendError(request, response, error)
     }
   })
 
@@ -64,16 +82,16 @@ export function createImportApp(options = {}) {
   })
 
   app.post('/api/notes', requireAuth, async (request, response) => {
-    response.status(201).json({ note: await store.createNote(request.user.id, request.body) })
+    response.status(201).json({ note: await store.createNote(request.user.id, validateNoteInput(request.body)) })
   })
 
   app.post('/api/notes/bulk', requireAuth, async (request, response) => {
-    const notes = Array.isArray(request.body?.notes) ? request.body.notes : []
+    const notes = validateBulkNotes(request.body)
     response.status(201).json({ notes: await store.bulkCreateNotes(request.user.id, notes) })
   })
 
   app.patch('/api/notes/:id', requireAuth, async (request, response) => {
-    const note = await store.updateNote(request.user.id, request.params.id, request.body)
+    const note = await store.updateNote(request.user.id, request.params.id, validateNoteInput(request.body, { partial: true }))
     if (!note) return response.status(404).json({ error: '素材不存在。' })
     return response.json({ note })
   })
@@ -84,65 +102,71 @@ export function createImportApp(options = {}) {
     return response.json({ ok: true })
   })
 
-  app.get('/api/ai/capabilities', requireAuth, (_request, response) => {
+  app.use('/api/ai', requireAuth, aiRateLimit)
+
+  app.get('/api/ai/capabilities', (_request, response) => {
     response.json(getAICapabilities())
   })
 
-  app.post('/api/ai/analyze', requireAuth, async (request, response) => {
+  app.post('/api/ai/analyze', async (request, response) => {
     const notes = await store.listNotes(request.user.id)
     const note = notes.find((item) => item.id === request.body?.noteId) || request.body?.note
     if (!note) return response.status(404).json({ error: '素材不存在。' })
     response.json({ analysis: await analyzeNote(note, notes) })
   })
 
-  app.post('/api/ai/ask', requireAuth, async (request, response) => {
+  app.post('/api/ai/ask', async (request, response) => {
     const notes = await store.listNotes(request.user.id)
-    response.json({ result: await answerQuestion(String(request.body?.question || ''), notes) })
+    const requestedIds = new Set(validateNoteIds(request.body?.noteIds))
+    const sourceNotes = requestedIds.size ? notes.filter((note) => requestedIds.has(note.id)) : notes
+    response.json({ result: await answerQuestion(validateQuestion(request.body?.question), sourceNotes) })
   })
 
-  app.post('/api/ai/generate', requireAuth, async (request, response) => {
+  app.post('/api/ai/generate', async (request, response) => {
     const notes = await store.listNotes(request.user.id)
-    const requestedIds = Array.isArray(request.body?.noteIds) ? new Set(request.body.noteIds) : null
-    const sourceNotes = requestedIds ? notes.filter((note) => requestedIds.has(note.id)) : notes
-    response.json({ markdown: await generateOutput(request.body?.type || 'outline', sourceNotes.slice(0, 8)) })
+    const requestedIds = new Set(validateNoteIds(request.body?.noteIds))
+    const sourceNotes = requestedIds.size ? notes.filter((note) => requestedIds.has(note.id)) : notes
+    response.json({ markdown: await generateOutput(validateOutputType(request.body?.type), sourceNotes.slice(0, 8)) })
   })
 
-  app.get('/api/import/capabilities', requireAuth, async (_request, response) => {
+  app.use('/api/import', requireAuth, importRateLimit)
+
+  app.get('/api/import/capabilities', async (_request, response) => {
     response.json({ ...(await getImportCapabilities()), ...getAICapabilities() })
   })
 
-  app.post('/api/import/url', requireAuth, async (request, response) => {
+  app.post('/api/import/url', async (request, response) => {
     try {
-      response.json(await extractFromUrl({ url: request.body?.url, aiConfig: getPlatformAIConfig() }))
+      response.json(await extractFromUrl({ url: validateImportUrl(request.body?.url), aiConfig: getPlatformAIConfig() }))
     } catch (error) {
-      response.status(500).json(errorResult(error))
+      sendImportError(request, response, error)
     }
   })
 
-  app.post('/api/import/image', requireAuth, upload.single('file'), async (request, response) => {
+  app.post('/api/import/image', imageUpload.single('file'), async (request, response) => {
     try {
       response.json(
         await extractImage({
-          imageUrl: request.body.imageUrl,
-          file: request.file,
+          imageUrl: request.body.imageUrl ? validateImportUrl(request.body.imageUrl) : '',
+          file: request.file ? assertUpload(request.file, 'image') : undefined,
           aiConfig: getPlatformAIConfig(),
         }),
       )
     } catch (error) {
-      response.status(500).json(errorResult(error, 'image'))
+      sendImportError(request, response, error, 'image')
     }
   })
 
-  app.post('/api/import/media', requireAuth, upload.single('file'), async (request, response) => {
+  app.post('/api/import/media', mediaUpload.single('file'), async (request, response) => {
     try {
       response.json(
         await extractMedia({
-          file: request.file,
+          file: assertUpload(request.file, 'media'),
           aiConfig: getPlatformAIConfig(),
         }),
       )
     } catch (error) {
-      response.status(500).json(errorResult(error, 'video'))
+      sendImportError(request, response, error, 'video')
     }
   })
 
@@ -153,8 +177,11 @@ export function createImportApp(options = {}) {
   mountProductionClient(app, options.staticDir)
 
   app.use((error, _request, response, _next) => {
-    const status = Number(error?.status || error?.statusCode) || 500
-    response.status(status).json(errorResult(error))
+    const request = _request
+    if (request.path.startsWith('/api/import/')) {
+      return sendImportError(request, response, error)
+    }
+    sendError(request, response, error)
   })
 
   return app
@@ -173,13 +200,19 @@ function mountProductionClient(app, staticDir) {
   })
 }
 
-function sendError(response, error) {
-  response.status(Number(error?.status) || (error?.code === 'USER_EXISTS' ? 409 : 500)).json({
-    error: error?.message || '请求失败。',
-  })
+function sendError(request, response, error) {
+  const result = publicError(error, request.requestId)
+  if (result.status >= 500) logServerError(error, request.requestId)
+  response.status(result.status).json(result.body)
 }
 
-function errorResult(error, sourceType = 'article') {
+function sendImportError(request, response, error, sourceType = 'article') {
+  const result = publicError(error, request.requestId)
+  if (result.status >= 500) logServerError(error, request.requestId)
+  response.status(result.status).json(errorResult(result.body.error, sourceType, request.requestId))
+}
+
+function errorResult(message, sourceType = 'article', requestId = '') {
   return {
     status: 'failed',
     sourceType,
@@ -188,6 +221,7 @@ function errorResult(error, sourceType = 'article') {
     sourceUrl: '',
     markdown: '',
     extractedText: '',
-    warnings: [error?.message || '导入服务遇到未知错误。'],
+    warnings: [message || '导入服务遇到未知错误。'],
+    requestId,
   }
 }

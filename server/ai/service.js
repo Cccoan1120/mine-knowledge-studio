@@ -83,6 +83,7 @@ async function chatText(config, messages, jsonMode = false) {
       temperature: 0.2,
       ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
     }),
+    signal: AbortSignal.timeout(60_000),
   })
 
   if (!response.ok) throw new Error(`AI request failed: ${response.status}`)

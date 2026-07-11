@@ -10,6 +10,11 @@ export function createPrismaStore() {
   const prisma = new PrismaClient({ adapter })
 
   return {
+    async healthCheck() {
+      await prisma.$queryRawUnsafe('SELECT 1')
+      return true
+    },
+
     async createUser({ email, passwordHash }) {
       try {
         const user = await prisma.user.create({ data: { email, passwordHash } })

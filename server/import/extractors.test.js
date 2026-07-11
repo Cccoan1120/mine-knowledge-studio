@@ -16,10 +16,12 @@ let server
 
 beforeEach(() => {
   process.env.MINE_SKIP_YTDLP = '1'
+  process.env.MINE_ALLOW_PRIVATE_IMPORTS = '1'
 })
 
 afterEach(async () => {
   delete process.env.MINE_SKIP_YTDLP
+  delete process.env.MINE_ALLOW_PRIVATE_IMPORTS
   if (!server) return
   await new Promise((resolve) => server.close(resolve))
   server = undefined

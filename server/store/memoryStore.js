@@ -5,6 +5,10 @@ export function createMemoryStore() {
   const notes = new Map()
 
   return {
+    async healthCheck() {
+      return true
+    },
+
     async createUser({ email, passwordHash }) {
       const existing = Array.from(users.values()).find((user) => user.email === email)
       if (existing) {

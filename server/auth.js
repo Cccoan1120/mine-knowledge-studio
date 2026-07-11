@@ -67,8 +67,9 @@ function normalizeEmail(email) {
 }
 
 function assertPassword(password) {
-  if (String(password || '').length < 6) {
-    const error = new Error('密码至少需要 6 位。')
+  const value = String(password || '')
+  if (value.length < 8 || value.length > 128) {
+    const error = new Error('密码需要 8 到 128 位。')
     error.status = 400
     throw error
   }

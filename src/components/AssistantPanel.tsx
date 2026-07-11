@@ -11,9 +11,6 @@ type AssistantPanelProps = {
   onCollapse: () => void
   note: Note | undefined
   notes: Note[]
-  tags: string[]
-  selectedTag: string
-  setSelectedTag: (tag: string) => void
   question: string
   setQuestion: (value: string) => void
   answer: AnswerResult | null
@@ -36,9 +33,6 @@ export function AssistantPanel({
   onCollapse,
   note,
   notes,
-  tags,
-  selectedTag,
-  setSelectedTag,
   question,
   setQuestion,
   answer,
@@ -84,15 +78,6 @@ export function AssistantPanel({
       {activeTab === 'organize' ? (
         <section className="assistant-section">
           <div className="assistant-card">
-            <p className="section-kicker">AI 收纳会做什么</p>
-            <ul className="organize-list">
-              <li>提炼标题和摘要，让素材能被快速扫描。</li>
-              <li>生成标签和主题，进入可筛选的知识分类。</li>
-              <li>寻找关联素材，形成素材图谱的连接。</li>
-            </ul>
-          </div>
-
-          <div className="assistant-card">
             <p className="section-kicker">摘要</p>
             <p>{note?.summary || '点击“AI 收纳”后，Mine 会生成摘要、标签、主题和关联素材。'}</p>
           </div>
@@ -102,22 +87,6 @@ export function AssistantPanel({
             <div className="tag-row">
               {(note?.tags.length ? note.tags : ['待整理']).map((tag) => (
                 <span key={tag}>{tag}</span>
-              ))}
-            </div>
-          </div>
-
-          <div className="assistant-card">
-            <p className="section-kicker">按标签过滤</p>
-            <div className="filter-tags">
-              {tags.map((tag) => (
-                <button
-                  type="button"
-                  key={tag}
-                  className={tag === selectedTag ? 'is-active' : ''}
-                  onClick={() => setSelectedTag(tag)}
-                >
-                  {tag === '全部标签' ? tag : `#${tag}`}
-                </button>
               ))}
             </div>
           </div>
@@ -151,7 +120,7 @@ export function AssistantPanel({
 
       {activeTab === 'ask' ? (
         <section className="assistant-section">
-          <textarea value={question} onChange={(event) => setQuestion(event.target.value)} />
+          <textarea value={question} placeholder="针对素材库提一个问题" onChange={(event) => setQuestion(event.target.value)} />
           <button type="button" className="primary-action" onClick={onAsk} disabled={busy === 'question'}>
             {busy === 'question' ? <Loader2 className="spin" size={16} /> : <Bot size={16} />}
             基于来源回答

@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { JSDOM } from 'jsdom'
 import TurndownService from 'turndown'
+import { safeFetchExternal } from './safeFetch.js'
 
 const execFileAsync = promisify(execFile)
 const userAgent =
@@ -48,9 +49,10 @@ export async function extractFromUrl({ url, aiConfig = {} }) {
 
 export async function extractArticleUrl(url) {
   try {
-    const response = await fetch(url, {
+    const response = await safeFetchExternal(url, {
       headers: { 'User-Agent': userAgent, Accept: 'text/html,application/xhtml+xml' },
-      redirect: 'follow',
+      timeoutMs: 10_000,
+      maxBytes: 5 * 1024 * 1024,
     })
 
     if (!response.ok) {
@@ -93,9 +95,10 @@ export async function extractPodcastUrl(url, aiConfig = {}) {
   try {
     if (isAudioFileUrl(url)) return extractAudioUrl(url, aiConfig)
 
-    const response = await fetch(url, {
+    const response = await safeFetchExternal(url, {
       headers: { 'User-Agent': userAgent, Accept: 'text/html,application/rss+xml,application/xml,text/xml' },
-      redirect: 'follow',
+      timeoutMs: 10_000,
+      maxBytes: 5 * 1024 * 1024,
     })
     if (!response.ok) return needsAction('podcast', url, `播客页面返回 ${response.status}，可能需要登录或平台限制。`, '播客导入')
 
@@ -374,11 +377,11 @@ function normalizeUrl(value) {
 
 async function resolveUrl(url) {
   try {
-    const response = await fetch(url, {
+    const response = await safeFetchExternal(url, {
       method: 'GET',
       headers: { 'User-Agent': userAgent, Accept: 'text/html,*/*' },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(2500),
+      timeoutMs: 2500,
+      maxBytes: 2 * 1024 * 1024,
     })
     return response.url || url
   } catch {
@@ -606,7 +609,11 @@ async function extractAudioUrl(url, aiConfig) {
 }
 
 async function transcribeRemoteAudio(url, aiConfig) {
-  const response = await fetch(url, { headers: { 'User-Agent': userAgent }, signal: AbortSignal.timeout(60000) })
+  const response = await safeFetchExternal(url, {
+    headers: { 'User-Agent': userAgent },
+    timeoutMs: 60_000,
+    maxBytes: 50 * 1024 * 1024,
+  })
   if (!response.ok) throw new Error(`音频下载返回 ${response.status}`)
   const buffer = Buffer.from(await response.arrayBuffer())
   return transcribeBuffer(buffer, fileNameFromUrl(url) || 'podcast.mp3', response.headers.get('content-type') || 'audio/mpeg', aiConfig)
@@ -615,10 +622,10 @@ async function transcribeRemoteAudio(url, aiConfig) {
 async function readPageMetadata(url) {
   if (process.env.MINE_SKIP_YTDLP === '1') return {}
   try {
-    const response = await fetch(url, {
+    const response = await safeFetchExternal(url, {
       headers: { 'User-Agent': userAgent, Accept: 'text/html,*/*' },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(2000),
+      timeoutMs: 2000,
+      maxBytes: 2 * 1024 * 1024,
     })
     if (!response.ok) return {}
     const html = await response.text()
@@ -751,7 +758,11 @@ async function readBestCaption(info) {
       const captions = group[language]
       const caption = Array.isArray(captions) && captions.find((item) => item.url && item.ext === 'vtt')
       if (caption) {
-        const response = await fetch(caption.url, { headers: { 'User-Agent': userAgent } })
+        const response = await safeFetchExternal(caption.url, {
+          headers: { 'User-Agent': userAgent },
+          timeoutMs: 10_000,
+          maxBytes: 5 * 1024 * 1024,
+        })
         if (response.ok) return parseVttToText(await response.text())
       }
     }
@@ -793,6 +804,7 @@ async function transcribeBuffer(buffer, fileName, mimeType, aiConfig) {
     method: 'POST',
     headers: { Authorization: `Bearer ${transcriptionConfig.apiKey}` },
     body: form,
+    signal: AbortSignal.timeout(120_000),
   })
 
   if (!response.ok) throw new Error(`转写接口返回 ${response.status}`)
@@ -821,6 +833,7 @@ async function callVisionModel(imageUrl, aiConfig) {
       ],
       temperature: 0.2,
     }),
+    signal: AbortSignal.timeout(60_000),
   })
 
   if (!response.ok) throw new Error(`视觉接口返回 ${response.status}`)
