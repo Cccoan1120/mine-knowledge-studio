@@ -53,13 +53,13 @@ export function AssistantPanel({
   onOpenCitation,
 }: AssistantPanelProps) {
   return (
-    <aside className="assistant-panel" style={{ width }} aria-label="Mine Copilot">
+    <aside className="assistant-panel" style={{ width }} aria-label="素材助手">
       <button type="button" className="resize-handle" onMouseDown={onResizeStart} aria-label="调整 AI 面板宽度" />
 
       <header className="assistant-header">
         <div>
-          <p>Mine Copilot</p>
-          <h2>把素材变成可复用内容</h2>
+          <p>素材助手</p>
+          <h2>基于已选来源</h2>
         </div>
         <button type="button" className="assistant-collapse" onClick={onCollapse} aria-label="收起 AI 面板" title="收起 AI 面板">
           <PanelRightClose size={17} />

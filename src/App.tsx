@@ -1,10 +1,12 @@
 import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import {
+  ChevronDown,
   Download,
+  ExternalLink,
   FileDown,
+  FilePenLine,
   FilePlus2,
   FolderOpen,
-  MoreHorizontal,
   Network,
   PanelLeftClose,
   PanelLeftOpen,
@@ -167,17 +169,27 @@ function App() {
       <main className="auth-shell">
         <section className="auth-panel" aria-label="Mine 登录注册">
           <div className="auth-copy">
-            <div className="brand-mark">M</div>
-            <p>Mine</p>
-            <h1>把外部信息变成你的专属知识库</h1>
-            <span>注册后即可拥有独立知识库，素材、标签、问答和输出都只属于当前账号。</span>
-            <div className="auth-flow" aria-hidden="true">
-              <span>收集</span>
-              <span>关联</span>
-              <span>输出</span>
+            <div className="auth-brand">
+              <div className="brand-mark">M</div>
+              <div>
+                <strong>Mine</strong>
+                <span>素材工作室</span>
+              </div>
+            </div>
+            <div className="auth-statement">
+              <h1>把外部信息变成你的专属知识库</h1>
+              <p>收进来，留下出处，在需要写作和思考的时候重新找到它。</p>
+            </div>
+            <div className="auth-footnote">
+              <span>为内容创作者与知识工作者设计</span>
+              <span>Mine 2026</span>
             </div>
           </div>
           <form className="auth-form" onSubmit={submitAuth}>
+            <header className="auth-form-header">
+              <h2>{authMode === 'login' ? '欢迎回来' : '创建你的素材库'}</h2>
+              <p>{authMode === 'login' ? '继续整理你的素材和想法。' : '从第一条值得留下的内容开始。'}</p>
+            </header>
             <div className="auth-tabs" aria-label="认证方式">
               <button type="button" className={authMode === 'login' ? 'is-active' : ''} onClick={() => setAuthMode('login')}>
                 登录
@@ -186,14 +198,28 @@ function App() {
                 注册
               </button>
             </div>
-            <label>
-              邮箱
-              <input type="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} />
-            </label>
-            <label>
-              密码
-              <input type="password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} />
-            </label>
+            <div className="auth-field">
+              <label htmlFor="auth-email">邮箱</label>
+              <input
+                id="auth-email"
+                type="email"
+                value={authEmail}
+                placeholder="name@example.com"
+                autoComplete="email"
+                onChange={(event) => setAuthEmail(event.target.value)}
+              />
+            </div>
+            <div className="auth-field">
+              <label htmlFor="auth-password">密码</label>
+              <input
+                id="auth-password"
+                type="password"
+                value={authPassword}
+                placeholder={authMode === 'login' ? '输入密码' : '至少 8 位字符'}
+                autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
+                onChange={(event) => setAuthPassword(event.target.value)}
+              />
+            </div>
             {authError ? <p className="auth-error">{authError}</p> : null}
             <button type="submit" className="primary-action" disabled={busy === 'auth'}>
               {authMode === 'login' ? '登录 Mine' : '创建账号'}
@@ -570,7 +596,7 @@ function App() {
             <div className="brand-mark">M</div>
             <div>
               <h1>Mine</h1>
-              <p>AI material studio</p>
+              <p>素材工作室</p>
             </div>
             <button type="button" className="sidebar-collapse" onClick={() => setShowLibrary(false)} aria-label="收起素材区">
               <PanelLeftClose size={17} />
@@ -696,8 +722,9 @@ function App() {
       <section className="workspace" aria-label="内容生产台">
         <header className="top-rail">
           <div className="top-title">
-            <p>内容生产台 / {selectedNote?.topic ?? 'Inbox'}</p>
-            <h2>{selectedNote?.title ?? '未选择素材'}</h2>
+            <span>素材库</span>
+            <span aria-hidden="true">/</span>
+            <strong>{selectedNote?.topic ?? 'Inbox'}</strong>
           </div>
           <div className="header-actions">
             <div className="layout-controls" aria-label="布局控制">
@@ -730,13 +757,14 @@ function App() {
             <div className="more-menu">
               <button
                 type="button"
-                className="icon-button"
+                className="more-button"
                 onClick={() => setMoreMenuOpen((value) => !value)}
                 aria-label="更多操作"
                 aria-expanded={moreMenuOpen}
                 title="更多操作"
               >
-                <MoreHorizontal size={18} />
+                更多
+                <ChevronDown size={14} />
               </button>
               {moreMenuOpen ? (
                 <div className="more-menu-popover" role="menu">
@@ -786,36 +814,38 @@ function App() {
               className="title-input"
               value={selectedNote.title}
               onChange={(event) => updateSelectedNote({ title: event.target.value })}
-              rows={2}
+              rows={1}
             />
 
-            <SourceTraceBar note={selectedNote} />
+            <div className="document-meta-row">
+              <SourceTraceBar note={selectedNote} />
 
-            <section className="tag-manager" aria-label="标签管理">
-              <div className="tag-manager-heading">
-                <Tags size={15} />
-                标签分类
-              </div>
-              <div className="tag-row editable-tags">
-                {selectedNote.tags.map((tag) => (
-                  <button type="button" key={tag} onClick={() => removeTag(tag)}>
-                    #{tag}
-                    <X size={13} />
-                  </button>
-                ))}
-                <input
-                  value={tagInput}
-                  placeholder="添加标签后回车"
-                  onChange={(event) => setTagInput(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault()
-                      addTag()
-                    }
-                  }}
-                />
-              </div>
-            </section>
+              <section className="tag-manager" aria-label="标签管理">
+                <div className="tag-manager-heading" title="标签">
+                  <Tags size={14} />
+                  <span>标签</span>
+                </div>
+                <div className="tag-row editable-tags">
+                  {selectedNote.tags.map((tag) => (
+                    <button type="button" key={tag} onClick={() => removeTag(tag)}>
+                      #{tag}
+                      <X size={13} />
+                    </button>
+                  ))}
+                  <input
+                    value={tagInput}
+                    placeholder="添加标签"
+                    onChange={(event) => setTagInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        addTag()
+                      }
+                    }}
+                  />
+                </div>
+              </section>
+            </div>
 
             <EditorErrorBoundary
               key={selectedNote.id}
@@ -851,7 +881,7 @@ function App() {
         <Suspense
           fallback={
             <aside className="assistant-panel assistant-loading" style={{ width: assistantWidth }}>
-              正在加载 Mine Copilot...
+              正在加载素材助手...
             </aside>
           }
         >
@@ -881,10 +911,10 @@ function App() {
           />
         </Suspense>
       ) : showAssistant ? (
-        <aside className="assistant-panel assistant-empty" style={{ width: assistantWidth }} aria-label="Mine Copilot">
+        <aside className="assistant-panel assistant-empty" style={{ width: assistantWidth }} aria-label="素材助手">
           <header className="assistant-header">
             <div>
-              <p>Mine Copilot</p>
+              <p>素材助手</p>
               <h2>先创建一条素材</h2>
             </div>
             <button type="button" className="assistant-collapse" onClick={() => setShowAssistant(false)} aria-label="收起 AI 面板" title="收起 AI 面板">
@@ -1032,15 +1062,21 @@ function saveStateLabel(state: 'saved' | 'dirty' | 'saving' | 'error', lastSaved
 
 function SourceTraceBar({ note }: { note: Note }) {
   const source = parseSourceTrace(note)
-  const details = Array.from(new Set([source.reliability, source.platform, source.importMethod].filter(Boolean)))
+  const isManual = !source.sourceUrl && (source.importMethod.startsWith('手动') || source.platform.startsWith('手动'))
+  const sourceName = isManual ? (source.importMethod.includes('粘贴') ? '粘贴内容' : '手动笔记') : source.platform
+  const method = !isManual && source.importMethod !== source.platform ? source.importMethod : ''
 
   return (
-    <section className="source-trace-bar" aria-label="来源追踪">
-      {details.map((detail, index) =>
-        index === 0 ? <strong key={detail}>{detail}</strong> : <span key={detail}>{detail}</span>,
-      )}
+    <section className="source-trace-bar" aria-label="素材来源" title={`来源可信度：${source.reliability}`}>
+      <FilePenLine size={14} />
+      <span className="source-trace-label">来源</span>
+      <strong>{sourceName}</strong>
+      {method ? <span>{method}</span> : null}
       {/^https?:\/\//.test(source.sourceUrl) ? (
-        <a href={source.sourceUrl} target="_blank" rel="noreferrer">查看原文</a>
+        <a href={source.sourceUrl} target="_blank" rel="noreferrer">
+          原文
+          <ExternalLink size={12} />
+        </a>
       ) : null}
     </section>
   )
@@ -1091,7 +1127,7 @@ function KnowledgeGraph({
     <section className="graph-panel" aria-label="知识图谱">
       <header>
         <div>
-          <p>Obsidian-style graph</p>
+          <p>关联视图</p>
           <h3>知识图谱</h3>
         </div>
         <button type="button" onClick={onClose}>
