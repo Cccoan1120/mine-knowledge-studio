@@ -2,6 +2,7 @@
   "name": "mine-knowledge-studio",
   "private": true,
   "version": "0.0.0",
+  "packageManager": "pnpm@10.34.5",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n import,web -c green,cyan \"node server/index.js\" \"vite --host 127.0.0.1\"",
