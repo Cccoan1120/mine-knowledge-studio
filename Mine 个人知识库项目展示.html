@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Mine｜个人知识库项目展示</title>
+  <style>
+    :root {
+      --deck-scale: 1;
+      font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    body { background: #1d2420; }
+
+    .stage {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 1920px;
+      height: 1080px;
+      transform: translate(-50%, -50%) scale(var(--deck-scale));
+      transform-origin: center;
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      display: none;
+      background: #f3f5f2;
+    }
+
+    .slide.is-active { display: grid; }
+
+    .deck-controls {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px;
+      background: #fff;
+    }
+
+    .deck-controls button {
+      min-height: 44px;
+      padding: 0 16px;
+    }
+  </style>
+</head>
+<body>
+  <main class="deck" aria-label="Mine 个人知识库项目展示">
+    <div class="stage" id="stage">
+      <section class="slide is-active" data-screen-label="01 Title" aria-hidden="false"></section>
+      <section class="slide" data-screen-label="02 Overview" aria-hidden="true"></section>
+      <section class="slide" data-screen-label="03 Origin" aria-hidden="true"></section>
+      <section class="slide" data-screen-label="04 Research" aria-hidden="true"></section>
+      <section class="slide" data-screen-label="05 Pain Points" aria-hidden="true"></section>
+      <section class="slide" data-screen-label="06 Competitors" aria-hidden="true"></section>
+      <section class="slide" data-screen-label="07 Opportunity" aria-hidden="true"></section>
+      <section class="slide" data-screen-label="08 Prototype" aria-hidden="true"></section>
+      <section class="slide" data-screen-label="09 Loop" aria-hidden="true"></section>
+      <section class="slide" data-screen-label="10 Capabilities" aria-hidden="true"></section>
+      <section class="slide" data-screen-label="11 Iterations" aria-hidden="true"></section>
+      <section class="slide" data-screen-label="12 Build" aria-hidden="true"></section>
+      <section class="slide" data-screen-label="13 Reflection" aria-hidden="true"></section>
+    </div>
+  </main>
+
+  <nav class="deck-controls" aria-label="幻灯片导航">
+    <button id="previous" type="button" aria-label="上一页">上一页</button>
+    <output id="counter" aria-live="polite">01 / 13</output>
+    <button id="next" type="button" aria-label="下一页">下一页</button>
+  </nav>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll('.slide'));
+    const storageKey = 'mine-showcase-slide';
+
+    function readSavedSlide() {
+      try {
+        return Number.parseInt(localStorage.getItem(storageKey) || '0', 10) || 0;
+      } catch {
+        return 0;
+      }
+    }
+
+    let currentSlide = Math.min(slides.length - 1, Math.max(0, readSavedSlide()));
+
+    function goToSlide(index) {
+      currentSlide = Math.min(slides.length - 1, Math.max(0, index));
+      slides.forEach((slide, slideIndex) => {
+        const active = slideIndex === currentSlide;
+        slide.classList.toggle('is-active', active);
+        slide.setAttribute('aria-hidden', String(!active));
+      });
+      document.querySelector('#counter').value = `${String(currentSlide + 1).padStart(2, '0')} / ${slides.length}`;
+      document.querySelector('#previous').disabled = currentSlide === 0;
+      document.querySelector('#next').disabled = currentSlide === slides.length - 1;
+      try {
+        localStorage.setItem(storageKey, String(currentSlide));
+      } catch {
+        // Navigation remains functional when storage is unavailable.
+      }
+    }
+
+    function nextSlide() {
+      goToSlide(currentSlide + 1);
+    }
+
+    function previousSlide() {
+      goToSlide(currentSlide - 1);
+    }
+
+    function fitStage() {
+      const scale = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+      document.documentElement.style.setProperty('--deck-scale', String(scale));
+    }
+
+    document.querySelector('#previous').addEventListener('click', previousSlide);
+    document.querySelector('#next').addEventListener('click', nextSlide);
+
+    document.addEventListener('keydown', (event) => {
+      if (event.target.closest('a, button')) return;
+      if (['ArrowRight', 'PageDown', ' '].includes(event.key)) {
+        event.preventDefault();
+        nextSlide();
+      }
+      if (['ArrowLeft', 'PageUp'].includes(event.key)) {
+        event.preventDefault();
+        previousSlide();
+      }
+    });
+
+    window.addEventListener('resize', fitStage, { passive: true });
+    fitStage();
+    goToSlide(currentSlide);
+  </script>
+</body>
+</html>
