@@ -14,6 +14,7 @@ dist-ssr
 .git.invalid-*
 /mine-*.png
 /codex-*.png
+.worktrees/
 
 # Editor directories and files
 .vscode/*
