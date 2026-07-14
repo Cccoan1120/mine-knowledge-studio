@@ -55,7 +55,7 @@
     .js-enabled .stage {
       position: absolute;
       left: 50%;
-      top: 50%;
+      top: var(--stage-top, 50%);
       height: 1080px;
       margin: 0;
       transform: translate(-50%, -50%) scale(var(--deck-scale));
@@ -138,7 +138,7 @@
       bottom: 26px;
       padding-top: 12px;
       border-top: 1px solid var(--line);
-      font-size: 18px;
+      font-size: 20px;
       letter-spacing: .08em;
     }
 
@@ -322,7 +322,7 @@
     }
 
     .orbit-core strong { font-size: 56px; line-height: 1; }
-    .orbit-core small { margin-top: -24px; font-size: 15px; letter-spacing: .16em; }
+    .orbit-core small { margin-top: -24px; font-size: 20px; letter-spacing: .12em; }
 
     .layout-overview {
       grid-template-columns: 1.1fr .9fr;
@@ -505,14 +505,14 @@
     .table-row > * { display: flex; align-items: center; padding: 18px 22px; border-right: 1px solid var(--line); font-size: 22px; }
     .table-row > *:last-child { border-right: 0; }
     .table-row strong { font-size: 24px; line-height: 1.28; }
-    .table-row small { color: var(--muted); font-size: 17px; font-weight: 650; }
+    .table-row small { color: var(--muted); font-size: 20px; font-weight: 650; }
     .table-head { min-height: 62px; color: var(--muted); background: var(--paper-subtle); }
-    .table-head span { font-size: 19px; font-weight: 800; letter-spacing: .04em; }
+    .table-head span { font-size: 20px; font-weight: 800; letter-spacing: .04em; }
     .mine-row { color: #fff; background: var(--accent); }
     .mine-row small { color: rgb(255 255 255 / 72%); }
 
     .matrix-note { display: flex; justify-content: space-between; color: var(--muted); }
-    .matrix-note p { margin: 0; font-size: 19px; }
+    .matrix-note p { margin: 0; font-size: 20px; }
     .matrix-note a { text-underline-offset: 4px; }
 
     .layout-opportunity {
@@ -560,7 +560,7 @@
     }
 
     .product-shot { display: block; width: 100%; height: 630px; object-fit: cover; object-position: center top; }
-    .product-frame figcaption { position: absolute; right: 16px; bottom: 12px; padding: 8px 12px; color: var(--muted); background: var(--paper); font-size: 18px; }
+    .product-frame figcaption { position: absolute; right: 16px; bottom: 12px; padding: 8px 12px; color: var(--muted); background: var(--paper); font-size: 20px; }
 
     .product-annotations {
       display: grid;
@@ -648,7 +648,7 @@
     .capability-main strong { margin-top: 206px; font-size: 42px; }
     .capability-grid p { margin: 14px 0 0; color: var(--muted); font-size: 23px; line-height: 1.55; }
     .capability-main p { color: rgb(255 255 255 / 78%); }
-    .capability-main code { display: block; margin-top: 30px; font-size: 19px; letter-spacing: .04em; }
+    .capability-main code { display: block; margin-top: 30px; font-size: 20px; letter-spacing: .04em; }
 
     .layout-timeline {
       grid-template-columns: .62fr 1.38fr;
@@ -711,9 +711,9 @@
     }
 
     .architecture-line i { height: 1px; background: var(--accent); }
-    .architecture small { display: block; color: var(--accent); font-size: 18px; font-weight: 850; letter-spacing: .1em; }
+    .architecture small { display: block; color: var(--accent); font-size: 20px; font-weight: 850; letter-spacing: .1em; }
     .architecture strong { display: block; margin-top: 25px; font-size: 25px; }
-    .architecture span { display: block; margin-top: 6px; color: var(--muted); font-size: 19px; }
+    .architecture span { display: block; margin-top: 6px; color: var(--muted); font-size: 20px; }
 
     .build-method {
       grid-column: 2;
@@ -724,7 +724,7 @@
 
     .build-method li { padding: 20px 22px; border-right: 1px solid var(--line-strong); }
     .build-method li:last-child { border-right: 0; }
-    .build-method span { color: var(--accent); font-size: 19px; font-weight: 850; }
+    .build-method span { color: var(--accent); font-size: 20px; font-weight: 850; }
     .build-method p { margin: 12px 0 0; font-size: 20px; line-height: 1.45; }
 
     .layout-closing { background: var(--ink); color: #fff; }
@@ -767,18 +767,19 @@
 
     .closing-mark span { display: grid; width: 112px; height: 112px; place-items: center; color: var(--accent); background: #fff; font-size: 54px; font-weight: 900; }
     .closing-mark strong { margin-top: -56px; font-size: 36px; }
-    .closing-mark small { margin-top: -70px; color: rgb(255 255 255 / 54%); font-size: 15px; letter-spacing: .13em; }
+    .closing-mark small { max-width: 290px; margin-top: -70px; color: rgb(255 255 255 / 54%); font-size: 20px; letter-spacing: .08em; text-align: center; }
 
     .deck-controls {
       position: fixed;
       right: 18px;
-      bottom: 18px;
+      bottom: 6px;
       z-index: 20;
       display: none;
       align-items: center;
-      gap: 8px;
-      padding: 7px;
-      border: 1px solid rgb(255 255 255 / 20%);
+      gap: 6px;
+      height: 44px;
+      padding: 0;
+      border: 0;
       border-radius: 4px;
       color: #fff;
       background: rgb(29 36 32 / 90%);
@@ -1039,7 +1040,7 @@
       </section>
 
       <section class="slide layout-timeline" data-screen-label="11 Iterations" aria-hidden="true">
-        <header class="slide-header"><span class="section-code">ITERATION / 11</span><span class="section-name">迭代路径</span></header>
+        <header class="slide-header"><span class="section-code">ITERATION / 11</span><span class="section-name">迭代路径 · 后续调整</span></header>
         <div class="timeline-heading">
           <p class="eyebrow">BUILD · LEARN · ADJUST</p>
           <h2 class="slide-title">每次迭代，<br>都回应一个真实问题</h2>
@@ -1149,8 +1150,11 @@
     }
 
     function fitStage() {
-      const scale = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+      const controlReserve = 64;
+      const availableHeight = Math.max(360, window.innerHeight - controlReserve);
+      const scale = Math.min(window.innerWidth / 1920, availableHeight / 1080);
       document.documentElement.style.setProperty('--deck-scale', String(scale));
+      document.documentElement.style.setProperty('--stage-top', `${availableHeight / 2}px`);
     }
 
     document.querySelector('#previous').addEventListener('click', previousSlide);
