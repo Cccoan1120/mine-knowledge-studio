@@ -41,7 +41,8 @@ export function createIndexingWorker({
     } catch {
       const retryDelay = RETRY_DELAYS_MS[job.attempts - 1]
       const retryAt = retryDelay === undefined ? null : new Date(now().getTime() + retryDelay)
-      await store.recordIndexJobFailure(job, { retryAt })
+      const recorded = await store.recordIndexJobFailure(job, { retryAt })
+      if (!recorded) return { status: 'stale', jobId: job.id }
       logger.error('Knowledge indexing failed.', {
         jobId: job.id,
         attempt: job.attempts,

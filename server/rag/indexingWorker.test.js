@@ -55,6 +55,7 @@ describe('indexing worker', () => {
     expect(store.replaceIndexChunks).toHaveBeenCalledOnce()
     const [job, chunks] = store.replaceIndexChunks.mock.calls[0]
     expect(job.id).toBe('job-1')
+    expect(job.attempts).toBe(1)
     expect(chunks).toEqual([
       expect.objectContaining({
         ordinal: 0,
@@ -89,7 +90,22 @@ describe('indexing worker', () => {
     const result = await worker.runOnce()
 
     expect(result.status).toBe('stale')
+    expect(store.replaceIndexChunks.mock.calls[0][0].attempts).toBe(1)
     expect(store.recordIndexJobFailure).not.toHaveBeenCalled()
+  })
+
+  it('treats a fenced failure transition from an expired worker as stale', async () => {
+    const store = fakeStore()
+    store.recordIndexJobFailure.mockResolvedValueOnce(false)
+    const embeddingClient = { embed: vi.fn(async () => Promise.reject(new Error('provider failure'))) }
+    const logger = { error: vi.fn() }
+    const worker = createIndexingWorker({ store, embeddingClient, logger, now: () => now })
+
+    const result = await worker.runOnce()
+
+    expect(result).toEqual({ status: 'stale', jobId: 'job-1' })
+    expect(store.recordIndexJobFailure.mock.calls[0][0].attempts).toBe(1)
+    expect(logger.error).not.toHaveBeenCalled()
   })
 
   it('uses 5 seconds, 30 seconds, and 5 minutes before terminal failure on execution four', async () => {

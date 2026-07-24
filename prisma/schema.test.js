@@ -16,6 +16,7 @@ describe('knowledge indexing schema', () => {
     expect(schema).toContain('model KnowledgeIndexJob')
     expect(schema).toMatch(/noteId\s+String\s+@unique/)
     expect(schema).toMatch(/status\s+KnowledgeIndexStatus/)
+    expect(schema).toContain('@@index([status, lockedAt])')
   })
 
   it('enables pgvector and creates search, vector, ownership, and claiming indexes', async () => {
@@ -27,6 +28,7 @@ describe('knowledge indexing schema', () => {
     expect(migration).toContain('"KnowledgeChunk_userId_noteId_idx"')
     expect(migration).toContain('"KnowledgeIndexJob_userId_status_idx"')
     expect(migration).toContain('"KnowledgeIndexJob_status_availableAt_idx"')
+    expect(migration).toContain('"KnowledgeIndexJob_status_lockedAt_idx"')
     expect(migration.match(/ON DELETE CASCADE/g)).toHaveLength(4)
   })
 })

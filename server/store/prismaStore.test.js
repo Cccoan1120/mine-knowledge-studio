@@ -18,6 +18,21 @@ const storedNote = {
   updatedAt: new Date('2026-07-24T10:00:00.000Z'),
 }
 
+function indexedChunk(content = storedNote.content) {
+  return {
+    ordinal: 0,
+    headingPath: [],
+    content,
+    startOffset: 0,
+    endOffset: content.length,
+    tokenCount: 2,
+    contentHash: hashContent(content),
+    searchTokens: content,
+    indexVersion: 1,
+    embedding: [0.1],
+  }
+}
+
 describe('Prisma indexing store', () => {
   it('queues a pending index job in the same transaction that creates a note', async () => {
     const transaction = {
@@ -183,6 +198,7 @@ describe('Prisma indexing store', () => {
     }
     const transaction = {
       knowledgeIndexJob: { updateMany: vi.fn(async () => ({ count: 0 })) },
+      $executeRawUnsafe: vi.fn(async () => 0),
       $queryRawUnsafe: vi.fn(async () => [claimed]),
     }
     const prisma = { $transaction: vi.fn(async (callback) => callback(transaction)) }
@@ -191,10 +207,11 @@ describe('Prisma indexing store', () => {
     const result = await store.claimNextIndexJob()
 
     expect(result).toEqual(claimed)
-    expect(transaction.knowledgeIndexJob.updateMany).toHaveBeenCalledWith({
-      where: expect.objectContaining({ status: 'processing', attempts: { gte: 4 } }),
-      data: expect.objectContaining({ status: 'failed', lockedAt: null }),
-    })
+    expect(transaction.knowledgeIndexJob.updateMany).not.toHaveBeenCalled()
+    expect(transaction.$executeRawUnsafe).toHaveBeenCalledOnce()
+    const [cleanupQuery, ...cleanupParameters] = transaction.$executeRawUnsafe.mock.calls[0]
+    expect(cleanupQuery).toContain("CURRENT_TIMESTAMP - INTERVAL '5 minutes'")
+    expect(cleanupParameters).toEqual([])
     const [query] = transaction.$queryRawUnsafe.mock.calls[0]
     expect(query).toContain('FOR UPDATE SKIP LOCKED')
     expect(query).toContain('INTERVAL \'5 minutes\'')
@@ -229,7 +246,13 @@ describe('Prisma indexing store', () => {
 
     await expect(store.recordIndexJobFailure(job, { retryAt })).resolves.toBe(true)
     expect(prisma.knowledgeIndexJob.updateMany.mock.calls[0][0]).toEqual({
-      where: expect.objectContaining({ id: 'job-1', userId: 'user-1', contentHash: job.contentHash, status: 'processing' }),
+      where: expect.objectContaining({
+        id: 'job-1',
+        userId: 'user-1',
+        contentHash: job.contentHash,
+        status: 'processing',
+        attempts: 1,
+      }),
       data: {
         status: 'pending',
         availableAt: retryAt,
@@ -244,6 +267,93 @@ describe('Prisma indexing store', () => {
       lockedAt: null,
       lastError: 'Indexing failed.',
     })
+  })
+
+  it('does not reschedule an expired worker after a newer attempt claims the job', async () => {
+    const currentAttempt = 2
+    const prisma = {
+      knowledgeIndexJob: {
+        updateMany: vi.fn(async ({ where }) => ({
+          count: where.attempts === undefined || where.attempts === currentAttempt ? 1 : 0,
+        })),
+      },
+    }
+    const store = createPrismaStore({ prisma })
+    const expiredJob = {
+      id: 'job-1',
+      userId: 'user-1',
+      noteId: 'note-1',
+      contentHash: hashContent(storedNote.content),
+      status: 'processing',
+      attempts: 1,
+    }
+
+    const rescheduled = await store.recordIndexJobFailure(expiredJob, {
+      retryAt: new Date('2026-07-24T12:00:05.000Z'),
+    })
+
+    expect(rescheduled).toBe(false)
+    expect(prisma.knowledgeIndexJob.updateMany.mock.calls[0][0].where.attempts).toBe(1)
+  })
+
+  it('marks ready only when the completion has the current claimed attempt', async () => {
+    const transaction = {
+      $queryRawUnsafe: vi.fn(async () => [{ id: storedNote.id, content: storedNote.content }]),
+      $executeRawUnsafe: vi.fn(async () => 1),
+      knowledgeChunk: { deleteMany: vi.fn(async () => ({ count: 0 })) },
+      knowledgeIndexJob: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    }
+    const prisma = { $transaction: vi.fn(async (callback) => callback(transaction)) }
+    const store = createPrismaStore({ prisma })
+    const job = {
+      id: 'job-1',
+      noteId: storedNote.id,
+      userId: storedNote.userId,
+      contentHash: hashContent(storedNote.content),
+      status: 'processing',
+      attempts: 2,
+    }
+
+    await expect(store.replaceIndexChunks(job, [indexedChunk()])).resolves.toBe(true)
+    expect(transaction.knowledgeIndexJob.updateMany.mock.calls[0][0].where).toEqual(
+      expect.objectContaining({ status: 'processing', attempts: 2 }),
+    )
+  })
+
+  it('does not let an expired worker replace chunks after a newer attempt claims the job', async () => {
+    const currentAttempt = 2
+    const transaction = {
+      $queryRawUnsafe: vi.fn(async (query, ...parameters) => {
+        const hasAttemptFence = query.includes('job."attempts" = $5')
+        if (!hasAttemptFence || parameters[4] === currentAttempt) {
+          return [{ id: storedNote.id, content: storedNote.content }]
+        }
+        return []
+      }),
+      $executeRawUnsafe: vi.fn(async () => 1),
+      knowledgeChunk: { deleteMany: vi.fn(async () => ({ count: 0 })) },
+      knowledgeIndexJob: {
+        updateMany: vi.fn(async ({ where }) => ({
+          count: where.attempts === undefined || where.attempts === currentAttempt ? 1 : 0,
+        })),
+      },
+    }
+    const prisma = { $transaction: vi.fn(async (callback) => callback(transaction)) }
+    const store = createPrismaStore({ prisma })
+    const expiredJob = {
+      id: 'job-1',
+      noteId: storedNote.id,
+      userId: storedNote.userId,
+      contentHash: hashContent(storedNote.content),
+      status: 'processing',
+      attempts: 1,
+    }
+
+    const replaced = await store.replaceIndexChunks(expiredJob, [indexedChunk()])
+
+    expect(replaced).toBe(false)
+    expect(transaction.knowledgeChunk.deleteMany).not.toHaveBeenCalled()
+    expect(transaction.$executeRawUnsafe).not.toHaveBeenCalled()
   })
 
   it('does not replace chunks when the locked note content no longer matches the claimed hash', async () => {
@@ -264,6 +374,7 @@ describe('Prisma indexing store', () => {
         noteId: 'note-1',
         userId: 'user-1',
         contentHash: hashContent('old content'),
+        attempts: 1,
       },
       [
         {

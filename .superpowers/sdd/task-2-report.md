@@ -135,3 +135,73 @@ exit 0
 ## Remaining Limitation
 
 No live PostgreSQL/pgvector service was available in this task, so the migration was validated by schema generation, static migration tests, and parameterized store fakes rather than by applying it to a real database.
+
+## Concurrency Review Fix
+
+Review found that `contentHash` alone was not a sufficient worker lease: an expired worker could finish after the same unchanged note had been reclaimed with a higher attempt number. The claimed `attempts` value is now the lease fence.
+
+- The row-lock query that begins chunk replacement requires the same job ID, owner, note, content hash, `processing` status, and claimed attempt.
+- The final `ready` update repeats the same attempt fence.
+- Failed/rescheduled transitions also require the same claimed attempt, so an older worker cannot move a newer claim back to `pending` or `failed`.
+- The worker already forwarded the full claimed job object; worker regressions now explicitly verify that `attempts` reaches both successful and stale replacement calls.
+- Terminal stale-lock cleanup now compares `lockedAt` with PostgreSQL `CURRENT_TIMESTAMP`, matching the claim query's database clock.
+- A `(status, lockedAt)` index now supports stale processing-job scans.
+
+### Review RED
+
+The regressions were added before the concurrency implementation changed:
+
+```text
+$ pnpm test server/store/prismaStore.test.js server/rag/indexingWorker.test.js prisma/schema.test.js
+
+Test Files  2 failed | 1 passed (3)
+Tests       7 failed | 13 passed (20)
+
+failed: recovers expired locks and claims one due job with skip-locked semantics
+failed: stores only a fixed safe failure and either reschedules or terminates the current claim
+failed: does not reschedule an expired worker after a newer attempt claims the job
+failed: marks ready only when the completion has the current claimed attempt
+failed: does not let an expired worker replace chunks after a newer attempt claims the job
+failed: defines durable chunk and index job models
+failed: enables pgvector and creates search, vector, ownership, and claiming indexes
+```
+
+These failures showed the old JavaScript-clock cleanup, missing attempt predicates, and absent stale-lock index. The worker test file passed because the existing worker already passed the full claim, including `attempts`, into the store.
+
+A follow-up worker regression then verified that a rejected, fenced failure transition is reported as stale rather than as a successful reschedule:
+
+```text
+$ pnpm test server/rag/indexingWorker.test.js
+Test Files  1 failed (1)
+Tests       1 failed | 6 passed (7)
+
+expected { status: 'stale', jobId: 'job-1' }
+received { status: 'rescheduled', jobId: 'job-1' }
+```
+
+### Review GREEN
+
+```text
+$ pnpm test server/store/prismaStore.test.js server/rag/indexingWorker.test.js prisma/schema.test.js
+Test Files  3 passed (3)
+Tests       21 passed (21)
+
+$ pnpm test
+Test Files  20 passed (20)
+Tests       94 passed (94)
+
+$ pnpm db:generate
+Generated Prisma Client (v7.8.0)
+status before generation == status after generation
+
+$ pnpm lint
+oxlint
+exit 0
+
+$ pnpm build
+tsc -b && vite build
+2032 modules transformed
+built successfully
+```
+
+Live PostgreSQL/pgvector migration and lease-race integration remain intentionally unclaimed; they are deferred to the later CI/database integration task.

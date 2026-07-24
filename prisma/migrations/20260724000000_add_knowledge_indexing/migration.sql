@@ -48,6 +48,7 @@ CREATE INDEX "KnowledgeChunk_embedding_hnsw_idx"
 CREATE UNIQUE INDEX "KnowledgeIndexJob_noteId_key" ON "KnowledgeIndexJob"("noteId");
 CREATE INDEX "KnowledgeIndexJob_userId_status_idx" ON "KnowledgeIndexJob"("userId", "status");
 CREATE INDEX "KnowledgeIndexJob_status_availableAt_idx" ON "KnowledgeIndexJob"("status", "availableAt");
+CREATE INDEX "KnowledgeIndexJob_status_lockedAt_idx" ON "KnowledgeIndexJob"("status", "lockedAt");
 
 ALTER TABLE "KnowledgeChunk"
     ADD CONSTRAINT "KnowledgeChunk_userId_fkey"

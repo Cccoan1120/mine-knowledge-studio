@@ -202,18 +202,17 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
 
     async claimNextIndexJob() {
       return prisma.$transaction(async (transaction) => {
-        await transaction.knowledgeIndexJob.updateMany({
-          where: {
-            status: 'processing',
-            attempts: { gte: 4 },
-            lockedAt: { lte: new Date(Date.now() - 5 * 60_000) },
-          },
-          data: {
-            status: 'failed',
-            lockedAt: null,
-            lastError: 'Indexing failed.',
-          },
-        })
+        await transaction.$executeRawUnsafe(`
+          UPDATE "KnowledgeIndexJob"
+          SET
+            "status" = 'failed',
+            "lockedAt" = NULL,
+            "lastError" = 'Indexing failed.',
+            "updatedAt" = CURRENT_TIMESTAMP
+          WHERE "status" = 'processing'
+            AND "attempts" >= 4
+            AND "lockedAt" <= CURRENT_TIMESTAMP - INTERVAL '5 minutes'
+        `)
 
         const jobs = await transaction.$queryRawUnsafe(`
           UPDATE "KnowledgeIndexJob" AS job
@@ -262,12 +261,14 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
               AND job."userId" = $2
               AND job."contentHash" = $4
               AND job."status" = 'processing'
+              AND job."attempts" = $5
             FOR UPDATE OF note, job
           `,
           job.noteId,
           job.userId,
           job.id,
           job.contentHash,
+          job.attempts,
         )
         const note = notes[0]
         if (!note || hashContent(note.content) !== job.contentHash) return false
@@ -314,6 +315,7 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
             noteId: job.noteId,
             contentHash: job.contentHash,
             status: 'processing',
+            attempts: job.attempts,
           },
           data: {
             status: 'ready',
@@ -346,6 +348,7 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
           noteId: job.noteId,
           contentHash: job.contentHash,
           status: 'processing',
+          attempts: job.attempts,
         },
         data,
       })

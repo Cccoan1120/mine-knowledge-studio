@@ -83,4 +83,5 @@ model KnowledgeIndexJob {
 
   @@index([userId, status])
   @@index([status, availableAt])
+  @@index([status, lockedAt])
 }
