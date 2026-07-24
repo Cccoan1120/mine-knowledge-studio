@@ -67,6 +67,43 @@ export function createMemoryStore() {
       }
       return created
     },
+
+    async ensureIndexJobs() {
+      return { mode: 'basic', queued: 0 }
+    },
+
+    async getIndexStatus(userId) {
+      const total = Array.from(notes.values()).filter((note) => note.userId === userId).length
+      return {
+        mode: 'basic',
+        total,
+        pending: 0,
+        processing: 0,
+        ready: 0,
+        failed: 0,
+        missing: total,
+      }
+    },
+
+    async retryFailedIndexJobs() {
+      return 0
+    },
+
+    async claimNextIndexJob() {
+      return null
+    },
+
+    async loadNoteForIndexJob() {
+      return null
+    },
+
+    async replaceIndexChunks() {
+      return false
+    },
+
+    async recordIndexJobFailure() {
+      return false
+    },
   }
 }
 
