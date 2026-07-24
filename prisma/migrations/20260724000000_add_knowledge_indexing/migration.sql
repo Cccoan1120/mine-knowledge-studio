@@ -31,6 +31,7 @@ CREATE TABLE "KnowledgeIndexJob" (
     "attempts" INTEGER NOT NULL DEFAULT 0,
     "availableAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "lockedAt" TIMESTAMP(3),
+    "leaseToken" TEXT,
     "lastError" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -46,6 +47,7 @@ CREATE INDEX "KnowledgeChunk_embedding_hnsw_idx"
     ON "KnowledgeChunk" USING hnsw ("embedding" vector_cosine_ops);
 
 CREATE UNIQUE INDEX "KnowledgeIndexJob_noteId_key" ON "KnowledgeIndexJob"("noteId");
+CREATE UNIQUE INDEX "KnowledgeIndexJob_leaseToken_key" ON "KnowledgeIndexJob"("leaseToken");
 CREATE INDEX "KnowledgeIndexJob_userId_status_idx" ON "KnowledgeIndexJob"("userId", "status");
 CREATE INDEX "KnowledgeIndexJob_status_availableAt_idx" ON "KnowledgeIndexJob"("status", "availableAt");
 CREATE INDEX "KnowledgeIndexJob_status_lockedAt_idx" ON "KnowledgeIndexJob"("status", "lockedAt");

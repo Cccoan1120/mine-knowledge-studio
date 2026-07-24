@@ -75,6 +75,7 @@ model KnowledgeIndexJob {
   attempts    Int                  @default(0)
   availableAt DateTime             @default(now())
   lockedAt    DateTime?
+  leaseToken  String?              @unique
   lastError   String?
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @updatedAt

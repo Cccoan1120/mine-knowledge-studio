@@ -14,6 +14,7 @@ function claimedJob(attempts = 1, content = '# Heading\n\nIndexed content') {
     contentHash: hashContent(content),
     status: 'processing',
     attempts,
+    leaseToken: `lease-${attempts}`,
   }
 }
 
@@ -56,6 +57,7 @@ describe('indexing worker', () => {
     const [job, chunks] = store.replaceIndexChunks.mock.calls[0]
     expect(job.id).toBe('job-1')
     expect(job.attempts).toBe(1)
+    expect(job.leaseToken).toBe('lease-1')
     expect(chunks).toEqual([
       expect.objectContaining({
         ordinal: 0,
@@ -90,7 +92,7 @@ describe('indexing worker', () => {
     const result = await worker.runOnce()
 
     expect(result.status).toBe('stale')
-    expect(store.replaceIndexChunks.mock.calls[0][0].attempts).toBe(1)
+    expect(store.replaceIndexChunks.mock.calls[0][0]).toMatchObject({ attempts: 1, leaseToken: 'lease-1' })
     expect(store.recordIndexJobFailure).not.toHaveBeenCalled()
   })
 
@@ -104,7 +106,7 @@ describe('indexing worker', () => {
     const result = await worker.runOnce()
 
     expect(result).toEqual({ status: 'stale', jobId: 'job-1' })
-    expect(store.recordIndexJobFailure.mock.calls[0][0].attempts).toBe(1)
+    expect(store.recordIndexJobFailure.mock.calls[0][0]).toMatchObject({ attempts: 1, leaseToken: 'lease-1' })
     expect(logger.error).not.toHaveBeenCalled()
   })
 

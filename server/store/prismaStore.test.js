@@ -56,11 +56,13 @@ describe('Prisma indexing store', () => {
         contentHash: hashContent('current content'),
         status: 'pending',
         attempts: 0,
+        leaseToken: null,
       }),
       update: expect.objectContaining({
         contentHash: hashContent('current content'),
         status: 'pending',
         attempts: 0,
+        leaseToken: null,
         lockedAt: null,
         lastError: null,
       }),
@@ -81,6 +83,7 @@ describe('Prisma indexing store', () => {
     await store.updateNote('user-1', 'note-1', { content: 'changed content' })
     expect(transaction.knowledgeIndexJob.upsert).toHaveBeenCalledOnce()
     expect(transaction.knowledgeIndexJob.upsert.mock.calls[0][0].update.contentHash).toBe(hashContent('changed content'))
+    expect(transaction.knowledgeIndexJob.upsert.mock.calls[0][0].update.leaseToken).toBeNull()
 
     transaction.knowledgeIndexJob.upsert.mockClear()
     transaction.note.findFirst.mockResolvedValueOnce({ ...storedNote, content: 'changed content' })
@@ -181,6 +184,7 @@ describe('Prisma indexing store', () => {
       data: expect.objectContaining({
         status: 'pending',
         attempts: 0,
+        leaseToken: null,
         lockedAt: null,
         lastError: null,
       }),
@@ -199,23 +203,68 @@ describe('Prisma indexing store', () => {
     const transaction = {
       knowledgeIndexJob: { updateMany: vi.fn(async () => ({ count: 0 })) },
       $executeRawUnsafe: vi.fn(async () => 0),
-      $queryRawUnsafe: vi.fn(async () => [claimed]),
+      $queryRawUnsafe: vi.fn(async (_query, leaseToken) => [{ ...claimed, leaseToken }]),
     }
     const prisma = { $transaction: vi.fn(async (callback) => callback(transaction)) }
     const store = createPrismaStore({ prisma })
 
     const result = await store.claimNextIndexJob()
 
-    expect(result).toEqual(claimed)
+    expect(result).toEqual(expect.objectContaining(claimed))
+    expect(result.leaseToken).toMatch(/^[0-9a-f-]{36}$/)
     expect(transaction.knowledgeIndexJob.updateMany).not.toHaveBeenCalled()
     expect(transaction.$executeRawUnsafe).toHaveBeenCalledOnce()
     const [cleanupQuery, ...cleanupParameters] = transaction.$executeRawUnsafe.mock.calls[0]
     expect(cleanupQuery).toContain("CURRENT_TIMESTAMP - INTERVAL '5 minutes'")
+    expect(cleanupQuery).toContain('"leaseToken" = NULL')
     expect(cleanupParameters).toEqual([])
-    const [query] = transaction.$queryRawUnsafe.mock.calls[0]
+    const [query, claimedLeaseToken] = transaction.$queryRawUnsafe.mock.calls[0]
+    expect(query).toContain('"leaseToken" = $1')
+    expect(claimedLeaseToken).toBe(result.leaseToken)
     expect(query).toContain('FOR UPDATE SKIP LOCKED')
     expect(query).toContain('INTERVAL \'5 minutes\'')
     expect(query).toContain('LIMIT 1')
+  })
+
+  it('issues a new lease when a failed unchanged job is reset and reuses attempt one', async () => {
+    const state = {
+      id: 'job-1',
+      userId: 'user-1',
+      noteId: 'note-1',
+      contentHash: hashContent(storedNote.content),
+      status: 'failed',
+      attempts: 1,
+      leaseToken: 'lease-old',
+    }
+    const transaction = {
+      $executeRawUnsafe: vi.fn(async () => 0),
+      $queryRawUnsafe: vi.fn(async (_query, leaseToken) => {
+        Object.assign(state, {
+          status: 'processing',
+          attempts: state.attempts + 1,
+          leaseToken,
+        })
+        return [{ ...state }]
+      }),
+    }
+    const prisma = {
+      knowledgeIndexJob: {
+        updateMany: vi.fn(async ({ data }) => {
+          Object.assign(state, data)
+          return { count: 1 }
+        }),
+      },
+      $transaction: vi.fn(async (callback) => callback(transaction)),
+    }
+    const store = createPrismaStore({ prisma })
+
+    await store.retryFailedIndexJobs('user-1')
+    const reclaimed = await store.claimNextIndexJob()
+
+    expect(reclaimed.contentHash).toBe(hashContent(storedNote.content))
+    expect(reclaimed.attempts).toBe(1)
+    expect(reclaimed.leaseToken).toMatch(/^[0-9a-f-]{36}$/)
+    expect(reclaimed.leaseToken).not.toBe('lease-old')
   })
 
   it('loads a claimed note only when note and job ownership agree', async () => {
@@ -241,6 +290,7 @@ describe('Prisma indexing store', () => {
       contentHash: hashContent('current content'),
       status: 'processing',
       attempts: 1,
+      leaseToken: 'lease-current',
     }
     const retryAt = new Date('2026-07-24T12:00:05.000Z')
 
@@ -251,11 +301,12 @@ describe('Prisma indexing store', () => {
         userId: 'user-1',
         contentHash: job.contentHash,
         status: 'processing',
-        attempts: 1,
+        leaseToken: 'lease-current',
       }),
       data: {
         status: 'pending',
         availableAt: retryAt,
+        leaseToken: null,
         lockedAt: null,
         lastError: 'Indexing failed.',
       },
@@ -264,17 +315,18 @@ describe('Prisma indexing store', () => {
     await expect(store.recordIndexJobFailure(job, { retryAt: null })).resolves.toBe(true)
     expect(prisma.knowledgeIndexJob.updateMany.mock.calls[1][0].data).toEqual({
       status: 'failed',
+      leaseToken: null,
       lockedAt: null,
       lastError: 'Indexing failed.',
     })
   })
 
-  it('does not reschedule an expired worker after a newer attempt claims the job', async () => {
-    const currentAttempt = 2
+  it('does not reschedule an old lease after reset and reclaim reuse the same attempt number', async () => {
+    const currentLeaseToken = 'lease-new'
     const prisma = {
       knowledgeIndexJob: {
         updateMany: vi.fn(async ({ where }) => ({
-          count: where.attempts === undefined || where.attempts === currentAttempt ? 1 : 0,
+          count: where.leaseToken === undefined || where.leaseToken === currentLeaseToken ? 1 : 0,
         })),
       },
     }
@@ -286,6 +338,7 @@ describe('Prisma indexing store', () => {
       contentHash: hashContent(storedNote.content),
       status: 'processing',
       attempts: 1,
+      leaseToken: 'lease-old',
     }
 
     const rescheduled = await store.recordIndexJobFailure(expiredJob, {
@@ -293,10 +346,12 @@ describe('Prisma indexing store', () => {
     })
 
     expect(rescheduled).toBe(false)
-    expect(prisma.knowledgeIndexJob.updateMany.mock.calls[0][0].where.attempts).toBe(1)
+    const where = prisma.knowledgeIndexJob.updateMany.mock.calls[0][0].where
+    expect(where.leaseToken).toBe('lease-old')
+    expect(where).not.toHaveProperty('attempts')
   })
 
-  it('marks ready only when the completion has the current claimed attempt', async () => {
+  it('marks ready only when the completion has the current lease', async () => {
     const transaction = {
       $queryRawUnsafe: vi.fn(async () => [{ id: storedNote.id, content: storedNote.content }]),
       $executeRawUnsafe: vi.fn(async () => 1),
@@ -312,20 +367,22 @@ describe('Prisma indexing store', () => {
       contentHash: hashContent(storedNote.content),
       status: 'processing',
       attempts: 2,
+      leaseToken: 'lease-current',
     }
 
     await expect(store.replaceIndexChunks(job, [indexedChunk()])).resolves.toBe(true)
-    expect(transaction.knowledgeIndexJob.updateMany.mock.calls[0][0].where).toEqual(
-      expect.objectContaining({ status: 'processing', attempts: 2 }),
-    )
+    const completion = transaction.knowledgeIndexJob.updateMany.mock.calls[0][0]
+    expect(completion.where).toEqual(expect.objectContaining({ status: 'processing', leaseToken: 'lease-current' }))
+    expect(completion.where).not.toHaveProperty('attempts')
+    expect(completion.data.leaseToken).toBeNull()
   })
 
-  it('does not let an expired worker replace chunks after a newer attempt claims the job', async () => {
-    const currentAttempt = 2
+  it('does not let an old lease replace chunks after reclaim reuses the same attempt number', async () => {
+    const currentLeaseToken = 'lease-new'
     const transaction = {
       $queryRawUnsafe: vi.fn(async (query, ...parameters) => {
-        const hasAttemptFence = query.includes('job."attempts" = $5')
-        if (!hasAttemptFence || parameters[4] === currentAttempt) {
+        const hasLeaseFence = query.includes('job."leaseToken" = $5')
+        if (!hasLeaseFence || parameters[4] === currentLeaseToken) {
           return [{ id: storedNote.id, content: storedNote.content }]
         }
         return []
@@ -334,7 +391,7 @@ describe('Prisma indexing store', () => {
       knowledgeChunk: { deleteMany: vi.fn(async () => ({ count: 0 })) },
       knowledgeIndexJob: {
         updateMany: vi.fn(async ({ where }) => ({
-          count: where.attempts === undefined || where.attempts === currentAttempt ? 1 : 0,
+          count: where.leaseToken === undefined || where.leaseToken === currentLeaseToken ? 1 : 0,
         })),
       },
     }
@@ -347,6 +404,7 @@ describe('Prisma indexing store', () => {
       contentHash: hashContent(storedNote.content),
       status: 'processing',
       attempts: 1,
+      leaseToken: 'lease-old',
     }
 
     const replaced = await store.replaceIndexChunks(expiredJob, [indexedChunk()])
@@ -354,6 +412,33 @@ describe('Prisma indexing store', () => {
     expect(replaced).toBe(false)
     expect(transaction.knowledgeChunk.deleteMany).not.toHaveBeenCalled()
     expect(transaction.$executeRawUnsafe).not.toHaveBeenCalled()
+  })
+
+  it('rejects completion and failure transitions without a lease token', async () => {
+    const transaction = {
+      $queryRawUnsafe: vi.fn(async () => [{ id: storedNote.id, content: storedNote.content }]),
+      $executeRawUnsafe: vi.fn(async () => 1),
+      knowledgeChunk: { deleteMany: vi.fn(async () => ({ count: 0 })) },
+      knowledgeIndexJob: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    }
+    const prisma = {
+      $transaction: vi.fn(async (callback) => callback(transaction)),
+      knowledgeIndexJob: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    }
+    const store = createPrismaStore({ prisma })
+    const unleasedJob = {
+      id: 'job-1',
+      noteId: storedNote.id,
+      userId: storedNote.userId,
+      contentHash: hashContent(storedNote.content),
+      status: 'processing',
+      attempts: 1,
+    }
+
+    await expect(store.replaceIndexChunks(unleasedJob, [indexedChunk()])).resolves.toBe(false)
+    await expect(store.recordIndexJobFailure(unleasedJob, { retryAt: null })).resolves.toBe(false)
+    expect(prisma.$transaction).not.toHaveBeenCalled()
+    expect(prisma.knowledgeIndexJob.updateMany).not.toHaveBeenCalled()
   })
 
   it('does not replace chunks when the locked note content no longer matches the claimed hash', async () => {
@@ -375,6 +460,7 @@ describe('Prisma indexing store', () => {
         userId: 'user-1',
         contentHash: hashContent('old content'),
         attempts: 1,
+        leaseToken: 'lease-current',
       },
       [
         {

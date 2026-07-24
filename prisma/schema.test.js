@@ -16,6 +16,7 @@ describe('knowledge indexing schema', () => {
     expect(schema).toContain('model KnowledgeIndexJob')
     expect(schema).toMatch(/noteId\s+String\s+@unique/)
     expect(schema).toMatch(/status\s+KnowledgeIndexStatus/)
+    expect(schema).toMatch(/leaseToken\s+String\?\s+@unique/)
     expect(schema).toContain('@@index([status, lockedAt])')
   })
 
@@ -29,6 +30,8 @@ describe('knowledge indexing schema', () => {
     expect(migration).toContain('"KnowledgeIndexJob_userId_status_idx"')
     expect(migration).toContain('"KnowledgeIndexJob_status_availableAt_idx"')
     expect(migration).toContain('"KnowledgeIndexJob_status_lockedAt_idx"')
+    expect(migration).toContain('"leaseToken" TEXT')
+    expect(migration).toContain('"KnowledgeIndexJob_leaseToken_key"')
     expect(migration.match(/ON DELETE CASCADE/g)).toHaveLength(4)
   })
 })

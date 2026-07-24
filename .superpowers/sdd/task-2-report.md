@@ -205,3 +205,62 @@ built successfully
 ```
 
 Live PostgreSQL/pgvector migration and lease-race integration remain intentionally unclaimed; they are deferred to the later CI/database integration task.
+
+## Reusable Lease Review Fix
+
+A second review identified that `attempts` is reusable after enqueue or manual retry resets it to zero. It therefore cannot be a durable lease fence even when the content hash is unchanged.
+
+- `KnowledgeIndexJob.leaseToken` is a nullable unique field.
+- Every claim generates a fresh Node `randomUUID()` and passes it as a parameter to the claim SQL; no database UUID extension was added.
+- Completion and failure/reschedule transitions require the exact non-empty lease token in addition to the existing job, user, note, hash, and `processing` checks.
+- Enqueue/upsert, manual failed-job retry, terminal stale cleanup, successful completion, reschedule, and terminal worker failure all clear the token.
+- Missing-token transitions return stale/false before any database mutation, avoiding Prisma's omission of `undefined` filters.
+- `attempts` remains only for retry-delay selection and maximum-attempt accounting.
+
+### Lease RED
+
+The reusable-attempt and schema regressions were added before production changed:
+
+```text
+$ pnpm test server/store/prismaStore.test.js server/rag/indexingWorker.test.js prisma/schema.test.js
+
+Test Files  2 failed | 1 passed (3)
+Tests       12 failed | 11 passed (23)
+
+failed: queues create and changed-content jobs with a cleared lease
+failed: resets failed jobs with a cleared lease
+failed: claims with a fresh UUID lease parameter
+failed: resets and reclaims the same hash at reused attempt one with a new lease
+failed: rejects old-lease completion and failure at the same attempt number
+failed: rejects completion and failure when no lease is present
+failed: defines and migrates the unique lease token
+```
+
+The worker test file passed during RED because it already forwarded the full claimed job object; the assertions now explicitly cover the token on completion and failure calls.
+
+### Lease GREEN
+
+```text
+$ pnpm test server/store/prismaStore.test.js server/rag/indexingWorker.test.js prisma/schema.test.js
+Test Files  3 passed (3)
+Tests       23 passed (23)
+
+$ pnpm test
+Test Files  20 passed (20)
+Tests       96 passed (96)
+
+$ pnpm db:generate
+Generated Prisma Client (v7.8.0)
+STATUS_UNCHANGED
+
+$ pnpm lint
+oxlint
+exit 0
+
+$ pnpm build
+tsc -b && vite build
+2032 modules transformed
+built successfully
+```
+
+Live PostgreSQL/pgvector migration and lease-race integration remain deferred and are not claimed by this fix.

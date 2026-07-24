@@ -194,6 +194,7 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
           attempts: 0,
           availableAt: new Date(),
           lockedAt: null,
+          leaseToken: null,
           lastError: null,
         },
       })
@@ -201,12 +202,14 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
     },
 
     async claimNextIndexJob() {
+      const leaseToken = randomUUID()
       return prisma.$transaction(async (transaction) => {
         await transaction.$executeRawUnsafe(`
           UPDATE "KnowledgeIndexJob"
           SET
             "status" = 'failed',
             "lockedAt" = NULL,
+            "leaseToken" = NULL,
             "lastError" = 'Indexing failed.',
             "updatedAt" = CURRENT_TIMESTAMP
           WHERE "status" = 'processing'
@@ -220,6 +223,7 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
             "status" = 'processing',
             "attempts" = job."attempts" + 1,
             "lockedAt" = CURRENT_TIMESTAMP,
+            "leaseToken" = $1,
             "updatedAt" = CURRENT_TIMESTAMP
           WHERE job."id" = (
             SELECT candidate."id"
@@ -237,7 +241,7 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
             LIMIT 1
           )
           RETURNING job.*
-        `)
+        `, leaseToken)
         return jobs[0] || null
       })
     },
@@ -249,6 +253,7 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
     },
 
     async replaceIndexChunks(job, chunks) {
+      if (!job.leaseToken) return false
       return prisma.$transaction(async (transaction) => {
         const notes = await transaction.$queryRawUnsafe(
           `
@@ -261,14 +266,14 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
               AND job."userId" = $2
               AND job."contentHash" = $4
               AND job."status" = 'processing'
-              AND job."attempts" = $5
+              AND job."leaseToken" = $5
             FOR UPDATE OF note, job
           `,
           job.noteId,
           job.userId,
           job.id,
           job.contentHash,
-          job.attempts,
+          job.leaseToken,
         )
         const note = notes[0]
         if (!note || hashContent(note.content) !== job.contentHash) return false
@@ -315,11 +320,12 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
             noteId: job.noteId,
             contentHash: job.contentHash,
             status: 'processing',
-            attempts: job.attempts,
+            leaseToken: job.leaseToken,
           },
           data: {
             status: 'ready',
             lockedAt: null,
+            leaseToken: null,
             lastError: null,
           },
         })
@@ -329,16 +335,19 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
     },
 
     async recordIndexJobFailure(job, { retryAt }) {
+      if (!job.leaseToken) return false
       const data = retryAt
         ? {
             status: 'pending',
             availableAt: retryAt,
             lockedAt: null,
+            leaseToken: null,
             lastError: 'Indexing failed.',
           }
         : {
             status: 'failed',
             lockedAt: null,
+            leaseToken: null,
             lastError: 'Indexing failed.',
           }
       const result = await prisma.knowledgeIndexJob.updateMany({
@@ -348,7 +357,7 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
           noteId: job.noteId,
           contentHash: job.contentHash,
           status: 'processing',
-          attempts: job.attempts,
+          leaseToken: job.leaseToken,
         },
         data,
       })
@@ -375,6 +384,7 @@ function upsertIndexJob(transaction, { userId, noteId, contentHash }) {
       status: 'pending',
       attempts: 0,
       availableAt,
+      leaseToken: null,
     },
     update: {
       userId,
@@ -383,6 +393,7 @@ function upsertIndexJob(transaction, { userId, noteId, contentHash }) {
       attempts: 0,
       availableAt,
       lockedAt: null,
+      leaseToken: null,
       lastError: null,
     },
   })
