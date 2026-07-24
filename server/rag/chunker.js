@@ -6,12 +6,17 @@ const parser = unified().use(remarkParse)
 export function chunkMarkdown(markdown, { targetTokens = 700, maxTokens = 1000, overlapTokens = 100 } = {}) {
   const source = String(markdown ?? '')
   const headingPath = []
+  const headingLevels = []
   const sections = []
 
   for (const node of parser.parse(source).children) {
     if (node.type === 'heading') {
-      headingPath[node.depth - 1] = nodeText(node).trim()
-      headingPath.length = node.depth
+      while (headingLevels.at(-1) >= node.depth) {
+        headingLevels.pop()
+        headingPath.pop()
+      }
+      headingLevels.push(node.depth)
+      headingPath.push(nodeText(node).trim())
       continue
     }
 
@@ -46,7 +51,7 @@ function splitSection(source, section, windowSize, overlap) {
   for (let startIndex = 0; startIndex < tokens.length; ) {
     const endIndex = Math.min(startIndex + windowSize, tokens.length)
     const startOffset = section.startOffset + tokens[startIndex].index
-    const endOffset = section.startOffset + endWithPunctuation(content, tokens[endIndex - 1])
+    const endOffset = section.startOffset + tokens[endIndex - 1].index + tokens[endIndex - 1].length
     const chunkContent = source.slice(startOffset, endOffset).trim()
     if (chunkContent) {
       chunks.push({
@@ -64,16 +69,23 @@ function splitSection(source, section, windowSize, overlap) {
 }
 
 function tokenSpans(content) {
-  return Array.from(String(content).matchAll(/[\u4e00-\u9fff]|[A-Za-z0-9]+/g)).map((match) => ({
+  const spans = Array.from(String(content).matchAll(/[\u4e00-\u9fff]|[\p{L}\p{M}\p{N}]+|[^\s\p{L}\p{M}\p{N}]/gu)).map((match) => ({
     index: match.index,
     length: match[0].length,
+    value: match[0],
+    isWord: /^[\p{L}\p{M}\p{N}]+$/u.test(match[0]),
   }))
-}
 
-function endWithPunctuation(content, token) {
-  let end = token.index + token.length
-  while (end < content.length && !/\s/.test(content[end])) end += 1
-  return end
+  return spans.reduce((tokens, span) => {
+    const previous = tokens.at(-1)
+    if (previous?.canAttachPunctuation && previous.index + previous.length === span.index && /^[\p{P}]+$/u.test(span.value)) {
+      previous.length += span.length
+      previous.canAttachPunctuation = false
+    } else {
+      tokens.push({ index: span.index, length: span.length, canAttachPunctuation: span.isWord })
+    }
+    return tokens
+  }, []).map(({ index, length }) => ({ index, length }))
 }
 
 function sameHeadingPath(left, right) {

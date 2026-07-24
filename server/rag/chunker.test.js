@@ -33,4 +33,32 @@ describe('chunkMarkdown', () => {
   it('never emits empty chunks', () => {
     expect(chunkMarkdown('# Heading\n\n   \n\n')).toEqual([])
   })
+
+  it('preserves non-ASCII content in chunks', () => {
+    const markdown = '# Languages\n\nПривет café 😀'
+
+    expect(chunkMarkdown(markdown)).toEqual([
+      expect.objectContaining({ content: 'Привет café 😀' }),
+    ])
+  })
+
+  it('splits oversized punctuation-only blocks within the hard maximum', () => {
+    const chunks = chunkMarkdown('!!!!!!!', { targetTokens: 2, maxTokens: 2, overlapTokens: 0 })
+
+    expect(chunks.map((chunk) => chunk.content)).toEqual(['!!', '!!', '!!', '!'])
+    expect(chunks.every((chunk) => chunk.tokenCount <= 2)).toBe(true)
+  })
+
+  it('does not hide oversized punctuation tails behind a word token', () => {
+    const chunks = chunkMarkdown('word!!!!!!!', { targetTokens: 2, maxTokens: 2, overlapTokens: 0 })
+
+    expect(chunks.map((chunk) => chunk.content)).toEqual(['word!!', '!!', '!!', '!'])
+    expect(chunks.every((chunk) => chunk.tokenCount <= 2)).toBe(true)
+  })
+
+  it('does not leave sparse entries for skipped heading levels', () => {
+    const chunks = chunkMarkdown('# Top\n\n### Deep\n\nBody')
+
+    expect(chunks[0].headingPath).toEqual(['Top', 'Deep'])
+  })
 })
