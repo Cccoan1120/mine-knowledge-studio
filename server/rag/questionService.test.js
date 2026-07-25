@@ -95,6 +95,28 @@ describe('RAG question service', () => {
     expect(JSON.stringify(result)).not.toContain('provider secret')
   })
 
+  it('does not use an injected embedding client when embeddings are disabled', async () => {
+    const evidence = chunk('keyword-1', 'note-1')
+    const store = postgresStore({ dense: [], keyword: [evidence] })
+    const embeddingClient = { embed: vi.fn(async () => [Array(1536).fill(0.1)]) }
+    const service = createRagQuestionService({
+      store,
+      embeddingClient,
+      embeddingEnabled: false,
+    })
+
+    const result = await service.ask({
+      userId: 'user-1',
+      question: 'Keyword evidence',
+      history: [],
+      scope: { noteIds: [], topics: [], tags: [] },
+    })
+
+    expect(result.retrievalMode).toBe('keyword')
+    expect(embeddingClient.embed).not.toHaveBeenCalled()
+    expect(store.retrieveKnowledgeCandidates.mock.calls[0][0].queryEmbedding).toBeUndefined()
+  })
+
   it('rewrites a follow-up before retrieval and suppresses a supplement when evidence is sufficient', async () => {
     const evidence = chunk('chunk-1', 'note-1')
     const store = postgresStore({ dense: [evidence], keyword: [evidence] })
@@ -257,6 +279,101 @@ describe('RAG question service', () => {
       'connection-sentinel',
       'provider-error-sentinel',
       'api-key-sentinel',
+    ]) {
+      expect(logs).not.toContain(sentinel)
+    }
+  })
+
+  it('records a safe fixed-category metric when basic retrieval fails', async () => {
+    const logger = { log: vi.fn() }
+    const times = [3_000, 3_020]
+    const service = createRagQuestionService({
+      store: {
+        storageMode: 'memory',
+        listNotes: vi.fn(async () => Promise.reject(
+          new Error('basic-retrieval-source-sentinel postgresql://retrieval-secret'),
+        )),
+      },
+      logger,
+      clock: () => times.shift(),
+    })
+
+    await expect(service.ask({
+      userId: 'user-1',
+      question: 'basic-question-sentinel',
+      scope: { noteIds: [], topics: [], tags: [] },
+    })).rejects.toThrow('basic-retrieval-source-sentinel')
+    expect(logger.log.mock.calls).toEqual([
+      ['Mine operational metric.', {
+        event: 'knowledge_retrieval',
+        outcome: 'failed',
+        durationMs: 20,
+        retrievalMode: 'basic',
+        denseCandidateCount: 0,
+        keywordCandidateCount: 0,
+        contextCount: 0,
+        failureCategory: 'retrieval_failed',
+      }],
+    ])
+    const logs = JSON.stringify(logger.log.mock.calls)
+    expect(logs).not.toContain('basic-question-sentinel')
+    expect(logs).not.toContain('basic-retrieval-source-sentinel')
+    expect(logs).not.toContain('retrieval-secret')
+  })
+
+  it('records a safe fixed-category metric when basic answer generation fails', async () => {
+    const logger = { log: vi.fn() }
+    const times = [4_000, 4_010, 5_000, 5_030]
+    const service = createRagQuestionService({
+      store: {
+        storageMode: 'memory',
+        listNotes: vi.fn(async () => [{
+          id: 'note-1',
+          title: 'source-title-sentinel',
+          content: 'source-content-sentinel',
+          topic: 'Inbox',
+          tags: [],
+        }]),
+      },
+      legacyAnswer: vi.fn(async () => Promise.reject(
+        new Error('basic-answer-provider-sentinel postgresql://answer-secret'),
+      )),
+      logger,
+      clock: () => times.shift(),
+    })
+
+    await expect(service.ask({
+      userId: 'user-1',
+      question: 'basic-answer-question-sentinel',
+      scope: { noteIds: [], topics: [], tags: [] },
+    })).rejects.toThrow('basic-answer-provider-sentinel')
+    expect(logger.log.mock.calls).toEqual([
+      ['Mine operational metric.', {
+        event: 'knowledge_retrieval',
+        outcome: 'success',
+        durationMs: 10,
+        retrievalMode: 'basic',
+        denseCandidateCount: 0,
+        keywordCandidateCount: 1,
+        contextCount: 1,
+        failureCategory: null,
+      }],
+      ['Mine operational metric.', {
+        event: 'answer_generation',
+        outcome: 'failed',
+        durationMs: 30,
+        retrievalMode: 'basic',
+        contextCount: 1,
+        failureCategory: 'answer_generation_failed',
+      }],
+    ])
+    const logs = JSON.stringify(logger.log.mock.calls)
+    for (const sentinel of [
+      'basic-answer-question-sentinel',
+      'source-title-sentinel',
+      'source-content-sentinel',
+      'basic-answer-provider-sentinel',
+      'answer-secret',
     ]) {
       expect(logs).not.toContain(sentinel)
     }

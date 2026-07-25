@@ -22,7 +22,7 @@ export function startRuntime({
   let worker = null
   let stopped = false
 
-  if (store.storageMode === 'postgres' && embeddingConfig.apiKey) {
+  if (store.storageMode === 'postgres' && embeddingConfig.enabled !== false && embeddingConfig.apiKey) {
     worker = workerFactory({
       store,
       embeddingClient: embeddingClient || createEmbeddingClient({ config: embeddingConfig }),

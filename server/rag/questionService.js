@@ -7,6 +7,7 @@ import { buildSearchTokens } from './searchTokens.js'
 export function createRagQuestionService({
   store,
   embeddingClient,
+  embeddingEnabled = true,
   chatClient,
   legacyAnswer = answerQuestion,
   logger,
@@ -21,7 +22,9 @@ export function createRagQuestionService({
       const retrievalStartedAt = clock()
       const standaloneQuestion = await rewriteQuestion({ chatClient, question, history })
       const searchTokens = buildSearchTokens(standaloneQuestion)
-      const queryEmbedding = await embedQuery(embeddingClient, standaloneQuestion)
+      const queryEmbedding = embeddingEnabled
+        ? await embedQuery(embeddingClient, standaloneQuestion)
+        : undefined
       let dense
       let keyword
       try {
@@ -141,7 +144,22 @@ export function createPlatformChatClient({ config, fetchImpl = fetch }) {
 
 async function answerBasic({ store, legacyAnswer, logger, clock, userId, question, scope }) {
   const retrievalStartedAt = clock()
-  const notes = (await store.listNotes(userId)).filter((note) => noteMatchesScope(note, scope))
+  let notes
+  try {
+    notes = (await store.listNotes(userId)).filter((note) => noteMatchesScope(note, scope))
+  } catch (error) {
+    emitMetric(logger, {
+      event: 'knowledge_retrieval',
+      outcome: 'failed',
+      durationMs: elapsedMs(clock, retrievalStartedAt),
+      retrievalMode: 'basic',
+      denseCandidateCount: 0,
+      keywordCandidateCount: 0,
+      contextCount: 0,
+      failureCategory: 'retrieval_failed',
+    })
+    throw error
+  }
   emitMetric(logger, {
     event: 'knowledge_retrieval',
     outcome: 'success',
@@ -153,7 +171,20 @@ async function answerBasic({ store, legacyAnswer, logger, clock, userId, questio
     failureCategory: null,
   })
   const answerStartedAt = clock()
-  const result = await legacyAnswer(question, notes)
+  let result
+  try {
+    result = await legacyAnswer(question, notes)
+  } catch (error) {
+    emitMetric(logger, {
+      event: 'answer_generation',
+      outcome: 'failed',
+      durationMs: elapsedMs(clock, answerStartedAt),
+      retrievalMode: 'basic',
+      contextCount: notes.length,
+      failureCategory: 'answer_generation_failed',
+    })
+    throw error
+  }
   const knowledgeAnswer = String(result.answer || '')
   const answer = {
     knowledgeAnswer,

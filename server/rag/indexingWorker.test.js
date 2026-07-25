@@ -197,6 +197,68 @@ describe('indexing worker', () => {
     for (const sentinel of secretSentinels) expect(logs).not.toContain(sentinel)
   })
 
+  it('records a safe fixed-category metric when claiming a job fails', async () => {
+    const store = fakeStore()
+    store.claimNextIndexJob.mockRejectedValueOnce(
+      new Error('claim-source-sentinel postgresql://claim-secret'),
+    )
+    const logger = { log: vi.fn(), error: vi.fn() }
+    const times = [3_000, 3_025]
+    const worker = createIndexingWorker({
+      store,
+      embeddingClient: { embed: vi.fn() },
+      logger,
+      clock: () => times.shift(),
+      now: () => now,
+    })
+
+    await expect(worker.runOnce()).rejects.toThrow('claim-source-sentinel')
+    expect(logger.log.mock.calls).toEqual([
+      ['Mine operational metric.', {
+        event: 'knowledge_index_job',
+        outcome: 'failed',
+        jobCount: 0,
+        durationMs: 25,
+        failureCategory: 'claim_failed',
+      }],
+    ])
+    expect(JSON.stringify(logger.log.mock.calls)).not.toContain('claim-source-sentinel')
+    expect(JSON.stringify(logger.log.mock.calls)).not.toContain('claim-secret')
+  })
+
+  it('records a safe fixed-category metric when failure persistence fails', async () => {
+    const store = fakeStore()
+    store.recordIndexJobFailure.mockRejectedValueOnce(
+      new Error('persistence-source-sentinel postgresql://persistence-secret'),
+    )
+    const logger = { log: vi.fn(), error: vi.fn() }
+    const times = [4_000, 4_040]
+    const worker = createIndexingWorker({
+      store,
+      embeddingClient: {
+        embed: vi.fn(async () => Promise.reject(new Error('embedding-source-sentinel'))),
+      },
+      logger,
+      clock: () => times.shift(),
+      now: () => now,
+    })
+
+    await expect(worker.runOnce()).rejects.toThrow('persistence-source-sentinel')
+    expect(logger.log.mock.calls).toEqual([
+      ['Mine operational metric.', {
+        event: 'knowledge_index_job',
+        outcome: 'failed',
+        jobCount: 1,
+        durationMs: 40,
+        failureCategory: 'failure_record_failed',
+      }],
+    ])
+    const logs = JSON.stringify(logger.log.mock.calls)
+    expect(logs).not.toContain('persistence-source-sentinel')
+    expect(logs).not.toContain('persistence-secret')
+    expect(logs).not.toContain('embedding-source-sentinel')
+  })
+
   it('starts and stops a non-overlapping polling loop', async () => {
     vi.useFakeTimers()
     const store = fakeStore({ job: null })

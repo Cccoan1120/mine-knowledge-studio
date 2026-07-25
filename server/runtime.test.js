@@ -12,7 +12,12 @@ function fakeServer({ closeImmediately = true } = {}) {
   return server
 }
 
-function runtimeHarness({ storageMode, embeddingConfigured, closeImmediately = true }) {
+function runtimeHarness({
+  storageMode,
+  embeddingConfigured,
+  embeddingEnabled = true,
+  closeImmediately = true,
+}) {
   const server = fakeServer({ closeImmediately })
   const app = { listen: vi.fn((_port, _host, callback) => {
     callback()
@@ -27,7 +32,10 @@ function runtimeHarness({ storageMode, embeddingConfigured, closeImmediately = t
     store,
     appFactory,
     workerFactory,
-    embeddingConfig: { apiKey: embeddingConfigured ? 'configured' : '' },
+    embeddingConfig: {
+      enabled: embeddingEnabled,
+      apiKey: embeddingConfigured ? 'configured' : '',
+    },
     embeddingClient: { embed: vi.fn() },
     processRef,
     logger: { log: vi.fn(), error: vi.fn() },
@@ -56,6 +64,17 @@ describe('server runtime indexing worker lifecycle', () => {
     const harness = runtimeHarness({ storageMode, embeddingConfigured })
 
     expect(harness.worker).toBeNull()
+  })
+
+  it('does not start an indexing worker when embeddings are explicitly disabled', () => {
+    const harness = runtimeHarness({
+      storageMode: 'postgres',
+      embeddingConfigured: true,
+      embeddingEnabled: false,
+    })
+
+    expect(harness.worker).toBeNull()
+    expect(harness.workerFactory).not.toHaveBeenCalled()
   })
 
   it('closes the server and stops the worker on normal termination signals', () => {

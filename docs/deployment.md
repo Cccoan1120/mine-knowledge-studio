@@ -57,6 +57,7 @@ AUTH_SECRET=replace-with-a-long-random-secret
 AI_API_KEY=
 AI_BASE_URL=https://api.openai.com/v1
 AI_MODEL=gpt-4o-mini
+AI_EMBEDDING_ENABLED=true
 AI_EMBEDDING_API_KEY=
 AI_EMBEDDING_BASE_URL=
 AI_EMBEDDING_MODEL=text-embedding-3-small
@@ -69,7 +70,7 @@ AI_TRANSCRIPTION_BASE_URL=https://api.openai.com/v1
 AI_TRANSCRIPTION_MODEL=gpt-4o-transcribe
 ```
 
-When `AI_EMBEDDING_API_KEY` or `AI_EMBEDDING_BASE_URL` is omitted, it defaults to the corresponding chat API credential. `AI_EMBEDDING_DIMENSIONS` must remain `1536`.
+When `AI_EMBEDDING_API_KEY` or `AI_EMBEDDING_BASE_URL` is omitted, it defaults to the corresponding chat API credential. `AI_EMBEDDING_DIMENSIONS` must remain `1536`. `AI_EMBEDDING_ENABLED=false` explicitly overrides credential fallback.
 
 Generate a strong `AUTH_SECRET` locally and paste only the value into Render. Do not commit it:
 
@@ -93,7 +94,7 @@ Do not release hybrid retrieval before the extension and migrations are ready. I
 
 Mine reports `hybrid` when Postgres and Embedding are configured, `keyword` when Postgres is active without Embedding, and `basic` for in-memory storage. Existing notes backfill asynchronously. Ready chunks remain queryable while coverage is partial.
 
-For a non-destructive rollback, remove the Embedding API configuration and restart the service. Mine then uses keyword retrieval over existing ready chunks without deleting them. New or edited notes remain queued until Embedding is restored.
+For a non-destructive rollback, set `AI_EMBEDDING_ENABLED=false` and restart the service. Mine then stops vector queries and the indexing worker, and uses keyword retrieval over existing ready chunks without deleting them. New or edited notes remain queued until `AI_EMBEDDING_ENABLED=true` is restored.
 
 Operational events contain only fixed event/outcome/failure categories, durations, retrieval mode, and candidate/context/job counts. Logs must never contain questions, rewritten questions, note or chunk content, quotes, citation text, API keys, provider errors, or database connection strings.
 

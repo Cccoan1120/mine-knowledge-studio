@@ -98,42 +98,69 @@ describeDatabase('live PostgreSQL and pgvector integration', () => {
       topic: 'Research',
       tags: ['vector', 'trusted'],
     })
+    const wrongTopic = await store.createNote(owner.id, {
+      title: 'Archived Aurora evidence',
+      content: 'Aurora cosine evidence 支持向量检索和 keyword lookup。',
+      topic: 'Archive',
+      tags: ['vector'],
+    })
+    const wrongTag = await store.createNote(owner.id, {
+      title: 'Untrusted Aurora evidence',
+      content: 'Aurora cosine evidence 支持向量检索和 keyword lookup。',
+      topic: 'Research',
+      tags: ['untrusted'],
+    })
     const privateNote = await store.createNote(other.id, {
       title: 'Private Aurora evidence',
       content: 'Aurora cosine evidence 支持向量检索和 keyword lookup。',
       topic: 'Research',
       tags: ['vector', 'trusted'],
     })
-    const embeddingClient = { embed: async (inputs) => inputs.map(() => fixtureEmbedding(100)) }
+    const embeddingClient = { embed: async (inputs) => inputs.map(fixtureEmbedding) }
     const worker = createIndexingWorker({ store, embeddingClient, logger: quietLogger })
-    await drainWorker(worker, 2)
-
-    const result = await store.retrieveKnowledgeCandidates({
+    await drainWorker(worker, 4)
+    const privateChunkIds = new Set(
+      (await prisma.knowledgeChunk.findMany({
+        where: { noteId: privateNote.id },
+        select: { id: true },
+      })).map((chunk) => chunk.id),
+    )
+    const question = 'Aurora cosine 向量检索'
+    const retrieve = (scope) => store.retrieveKnowledgeCandidates({
       userId: owner.id,
-      searchTokens: buildSearchTokens('Aurora cosine 向量检索'),
-      queryEmbedding: fixtureEmbedding(100),
-      scope: {
-        noteIds: [expected.id],
-        topics: ['Research'],
-        tags: ['vector'],
-      },
+      searchTokens: buildSearchTokens(question),
+      queryEmbedding: fixtureEmbedding(question),
+      scope,
       denseLimit: 5,
       keywordLimit: 5,
     })
 
-    expect(result.dense.map((chunk) => chunk.noteId)).toEqual([expected.id])
-    expect(result.keyword.map((chunk) => chunk.noteId)).toEqual([expected.id])
-    expect([...result.dense, ...result.keyword].map((chunk) => chunk.noteId)).not.toContain(privateNote.id)
+    const unfiltered = await retrieve({ noteIds: [], topics: [], tags: [] })
+    for (const candidates of [unfiltered.dense, unfiltered.keyword]) {
+      expect(new Set(candidates.map((chunk) => chunk.noteId))).toEqual(
+        new Set([expected.id, wrongTopic.id, wrongTag.id]),
+      )
+      expect(candidates.some((chunk) => privateChunkIds.has(chunk.id))).toBe(false)
+    }
 
-    const filtered = await store.retrieveKnowledgeCandidates({
-      userId: owner.id,
-      searchTokens: buildSearchTokens('Aurora cosine 向量检索'),
-      queryEmbedding: fixtureEmbedding(100),
-      scope: { noteIds: [expected.id], topics: ['Research'], tags: ['missing-tag'] },
-      denseLimit: 5,
-      keywordLimit: 5,
-    })
-    expect(filtered).toEqual({ dense: [], keyword: [] })
+    const noteFiltered = await retrieve({ noteIds: [expected.id], topics: [], tags: [] })
+    for (const candidates of [noteFiltered.dense, noteFiltered.keyword]) {
+      expect(candidates.map((chunk) => chunk.noteId)).toEqual([expected.id])
+    }
+
+    const topicFiltered = await retrieve({ noteIds: [], topics: ['Research'], tags: [] })
+    for (const candidates of [topicFiltered.dense, topicFiltered.keyword]) {
+      expect(new Set(candidates.map((chunk) => chunk.noteId))).toEqual(
+        new Set([expected.id, wrongTag.id]),
+      )
+    }
+
+    const tagFiltered = await retrieve({ noteIds: [], topics: [], tags: ['vector'] })
+    for (const candidates of [tagFiltered.dense, tagFiltered.keyword]) {
+      expect(new Set(candidates.map((chunk) => chunk.noteId))).toEqual(
+        new Set([expected.id, wrongTopic.id]),
+      )
+    }
   })
 
   it('claims distinct concurrent jobs and lets a fresh store claim pre-existing work', async () => {
@@ -163,7 +190,7 @@ describeDatabase('live PostgreSQL and pgvector integration', () => {
     })
     const freshWorker = createIndexingWorker({
       store: freshStore,
-      embeddingClient: { embed: async (inputs) => inputs.map(() => fixtureEmbedding(103)) },
+      embeddingClient: { embed: async (inputs) => inputs.map(fixtureEmbedding) },
       logger: quietLogger,
     })
     const freshResult = await freshWorker.runOnce()
@@ -178,7 +205,7 @@ describeDatabase('live PostgreSQL and pgvector integration', () => {
     const note = await store.createNote(owner.id, { title: 'Lifecycle', content: 'version one content' })
     const worker = createIndexingWorker({
       store,
-      embeddingClient: { embed: async (inputs) => inputs.map(() => fixtureEmbedding(101)) },
+      embeddingClient: { embed: async (inputs) => inputs.map(fixtureEmbedding) },
       logger: quietLogger,
     })
 
@@ -188,7 +215,7 @@ describeDatabase('live PostgreSQL and pgvector integration', () => {
     await store.updateNote(owner.id, note.id, { content: 'version three current content' })
 
     const staleReplacement = await store.replaceIndexChunks(staleClaim, [
-      chunkFor(staleClaim, 'version two content', fixtureEmbedding(102)),
+      chunkFor(staleClaim, 'version two content', fixtureEmbedding('version two content')),
     ])
     expect(staleReplacement).toBe(false)
     expect(await chunkContents(prisma, note.id)).toEqual(['version one content'])
@@ -237,19 +264,8 @@ describeDatabase('live PostgreSQL and pgvector integration', () => {
       title: 'Private duplicate',
     })
 
-    const embeddingByInput = new Map([
-      ...evaluationNotes.map((note) => [note.content, note.embeddingIndex]),
-      ...evaluationQuestions.map((question) => [
-        question.question,
-        evaluationNotes.find((note) => note.key === question.expectedKey).embeddingIndex,
-      ]),
-    ])
     const embeddingClient = {
-      embed: async (inputs) => inputs.map((input) => {
-        const index = embeddingByInput.get(input)
-        if (index === undefined) throw new Error('Unknown evaluation input.')
-        return fixtureEmbedding(index)
-      }),
+      embed: async (inputs) => inputs.map(fixtureEmbedding),
     }
     const worker = createIndexingWorker({ store, embeddingClient, logger: quietLogger })
     await drainWorker(worker, evaluationNotes.length + 1)
@@ -270,6 +286,18 @@ describeDatabase('live PostgreSQL and pgvector integration', () => {
 
     let hits = 0
     for (const fixture of evaluationQuestions) {
+      const rawCandidates = await store.retrieveKnowledgeCandidates({
+        userId: owner.id,
+        searchTokens: buildSearchTokens(fixture.question),
+        queryEmbedding: fixtureEmbedding(fixture.question),
+        scope: { noteIds: [], topics: [], tags: [] },
+        denseLimit: 30,
+        keywordLimit: 30,
+      })
+      for (const candidates of [rawCandidates.dense, rawCandidates.keyword]) {
+        expect(candidates.some((candidate) => otherChunkIds.has(candidate.id))).toBe(false)
+      }
+
       const result = await service.ask({
         userId: owner.id,
         question: fixture.question,

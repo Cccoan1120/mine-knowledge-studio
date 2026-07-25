@@ -8,6 +8,7 @@ const embeddingEnvironmentKeys = [
   'AI_BASE_URL',
   'AI_EMBEDDING_API_KEY',
   'AI_EMBEDDING_BASE_URL',
+  'AI_EMBEDDING_ENABLED',
   'AI_EMBEDDING_MODEL',
   'AI_EMBEDDING_DIMENSIONS',
 ]
@@ -22,6 +23,7 @@ describe('embedding configuration', () => {
     process.env.AI_BASE_URL = 'https://shared.example.test/v1'
 
     expect(getEmbeddingConfig()).toEqual({
+      enabled: true,
       apiKey: 'shared-key',
       baseUrl: 'https://shared.example.test/v1',
       model: 'text-embedding-3-small',
@@ -38,6 +40,7 @@ describe('embedding configuration', () => {
     process.env.AI_EMBEDDING_DIMENSIONS = '1536'
 
     expect(getEmbeddingConfig()).toEqual({
+      enabled: true,
       apiKey: 'embedding-key',
       baseUrl: 'https://embedding.example.test/v1',
       model: 'embedding-model',
@@ -68,5 +71,20 @@ describe('embedding configuration', () => {
 
     process.env.AI_EMBEDDING_API_KEY = 'embedding-secret'
     expect(getAICapabilities({ storageMode: 'postgres' }).retrievalMode).toBe('hybrid')
+  })
+
+  it('uses an explicit disable switch instead of resolved shared credentials', () => {
+    process.env.AI_API_KEY = 'shared-key'
+    process.env.AI_EMBEDDING_ENABLED = 'false'
+
+    expect(getEmbeddingConfig()).toMatchObject({
+      enabled: false,
+      apiKey: 'shared-key',
+    })
+    expect(getAICapabilities({ storageMode: 'postgres' })).toMatchObject({
+      chatConfigured: true,
+      embeddingConfigured: false,
+      retrievalMode: 'keyword',
+    })
   })
 })

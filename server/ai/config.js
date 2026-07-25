@@ -19,6 +19,7 @@ export function getEmbeddingConfig() {
   }
 
   return {
+    enabled: String(process.env.AI_EMBEDDING_ENABLED || 'true').trim().toLowerCase() !== 'false',
     apiKey: process.env.AI_EMBEDDING_API_KEY || process.env.AI_API_KEY || '',
     baseUrl: process.env.AI_EMBEDDING_BASE_URL || process.env.AI_BASE_URL || 'https://api.openai.com/v1',
     model: process.env.AI_EMBEDDING_MODEL || 'text-embedding-3-small',
@@ -31,7 +32,7 @@ export function getAICapabilities({
 } = {}) {
   const config = getPlatformAIConfig()
   const embeddingConfig = getEmbeddingConfig()
-  const embeddingConfigured = Boolean(embeddingConfig.apiKey)
+  const embeddingConfigured = embeddingConfig.enabled && Boolean(embeddingConfig.apiKey)
   return {
     chatConfigured: Boolean(config.apiKey),
     visionConfigured: Boolean(config.visionApiKey || config.apiKey),

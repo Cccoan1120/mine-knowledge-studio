@@ -5,7 +5,6 @@ export const evaluationNotes = [
     topic: 'Workflow',
     tags: ['meeting', 'capture'],
     content: '会议结束后五分钟内记录 decision owner 和 deadline。快速 capture 能减少后续信息丢失。',
-    embeddingIndex: 0,
   },
   {
     key: 'weekly-review',
@@ -13,7 +12,6 @@ export const evaluationNotes = [
     topic: 'Workflow',
     tags: ['review', 'planning'],
     content: '每周五进行 weekly review，先清空 inbox，再确认下周 three priorities。',
-    embeddingIndex: 1,
   },
   {
     key: 'reading-notes',
@@ -21,7 +19,6 @@ export const evaluationNotes = [
     topic: 'Learning',
     tags: ['reading', 'notes'],
     content: '阅读时先写一句 original insight，再补充 source quote 和自己的反驳。',
-    embeddingIndex: 2,
   },
   {
     key: 'customer-interview',
@@ -29,7 +26,6 @@ export const evaluationNotes = [
     topic: 'Research',
     tags: ['customer', 'interview'],
     content: 'Customer interview 要追问最近一次真实行为，不要只询问未来意愿。',
-    embeddingIndex: 3,
   },
   {
     key: 'launch-checklist',
@@ -37,7 +33,6 @@ export const evaluationNotes = [
     topic: 'Product',
     tags: ['launch', 'checklist'],
     content: 'Launch 前检查 rollback plan、health endpoint 和 database backup。',
-    embeddingIndex: 4,
   },
   {
     key: 'deep-work',
@@ -45,7 +40,6 @@ export const evaluationNotes = [
     topic: 'Focus',
     tags: ['focus', 'deep-work'],
     content: '上午九点到十一点关闭 notification，保留一个 deep work block。',
-    embeddingIndex: 5,
   },
   {
     key: 'idea-triage',
@@ -53,7 +47,6 @@ export const evaluationNotes = [
     topic: 'Writing',
     tags: ['idea', 'triage'],
     content: '新 idea 先进入 inbox，只有关联到 active project 才升级为 task。',
-    embeddingIndex: 6,
   },
   {
     key: 'source-trust',
@@ -61,7 +54,6 @@ export const evaluationNotes = [
     topic: 'Research',
     tags: ['source', 'trust'],
     content: '引用数据前核对 primary source、发布日期和 sample size。',
-    embeddingIndex: 7,
   },
   {
     key: 'feedback-loop',
@@ -69,7 +61,6 @@ export const evaluationNotes = [
     topic: 'Product',
     tags: ['feedback', 'experiment'],
     content: '每个 experiment 都要定义 signal、review date 和下一步 feedback loop。',
-    embeddingIndex: 8,
   },
   {
     key: 'writing-outline',
@@ -77,7 +68,6 @@ export const evaluationNotes = [
     topic: 'Writing',
     tags: ['writing', 'outline'],
     content: 'Writing outline 先列 reader question，再安排 evidence 和 conclusion。',
-    embeddingIndex: 9,
   },
   {
     key: 'api-errors',
@@ -85,7 +75,6 @@ export const evaluationNotes = [
     topic: 'Engineering',
     tags: ['api', 'errors'],
     content: 'API error log 只记录 request id 和 fixed category，不保存 payload content。',
-    embeddingIndex: 10,
   },
   {
     key: 'database-migration',
@@ -93,7 +82,6 @@ export const evaluationNotes = [
     topic: 'Engineering',
     tags: ['database', 'migration'],
     content: 'Database migration 先在 disposable staging 验证，再执行 production deploy。',
-    embeddingIndex: 11,
   },
   {
     key: 'vector-search',
@@ -101,7 +89,6 @@ export const evaluationNotes = [
     topic: 'Engineering',
     tags: ['vector', 'search'],
     content: 'Vector search 使用 cosine distance，embedding dimensions 固定为 1536。',
-    embeddingIndex: 12,
   },
   {
     key: 'keyword-search',
@@ -109,7 +96,6 @@ export const evaluationNotes = [
     topic: 'Engineering',
     tags: ['keyword', 'search'],
     content: '中文检索使用 bigram token，English keyword 统一 lowercase normalization。',
-    embeddingIndex: 13,
   },
   {
     key: 'hybrid-ranking',
@@ -117,7 +103,6 @@ export const evaluationNotes = [
     topic: 'Engineering',
     tags: ['hybrid', 'ranking'],
     content: 'Hybrid ranking 用 reciprocal rank fusion 合并 dense 和 keyword results。',
-    embeddingIndex: 14,
   },
   {
     key: 'citation-validation',
@@ -125,7 +110,6 @@ export const evaluationNotes = [
     topic: 'Safety',
     tags: ['citation', 'validation'],
     content: '每条 citation quote 必须是 source chunk 的 exact substring。',
-    embeddingIndex: 15,
   },
   {
     key: 'secret-handling',
@@ -133,7 +117,6 @@ export const evaluationNotes = [
     topic: 'Safety',
     tags: ['secret', 'security'],
     content: 'API key 和 database URL 只放 environment，不进入 log 或 note。',
-    embeddingIndex: 16,
   },
   {
     key: 'stale-writes',
@@ -141,7 +124,6 @@ export const evaluationNotes = [
     topic: 'Engineering',
     tags: ['lease', 'concurrency'],
     content: 'Worker 用 lease token 和 content hash 拒绝 stale write。',
-    embeddingIndex: 17,
   },
   {
     key: 'retry-policy',
@@ -149,7 +131,6 @@ export const evaluationNotes = [
     topic: 'Engineering',
     tags: ['retry', 'worker'],
     content: 'Retry policy 使用 5 seconds、30 seconds、5 minutes 三段 backoff。',
-    embeddingIndex: 18,
   },
   {
     key: 'user-isolation',
@@ -157,7 +138,6 @@ export const evaluationNotes = [
     topic: 'Safety',
     tags: ['privacy', 'isolation'],
     content: '所有 retrieval SQL 同时约束 chunk userId 和 note userId。',
-    embeddingIndex: 19,
   },
   {
     key: 'async-backfill',
@@ -165,7 +145,6 @@ export const evaluationNotes = [
     topic: 'Operations',
     tags: ['backfill', 'indexing'],
     content: '旧 notes 通过 async backfill 建立索引，ready content 继续可查询。',
-    embeddingIndex: 20,
   },
   {
     key: 'rollback-mode',
@@ -173,7 +152,6 @@ export const evaluationNotes = [
     topic: 'Operations',
     tags: ['rollback', 'keyword'],
     content: '关闭 Embedding config 会 non-destructive rollback 到 keyword mode。',
-    embeddingIndex: 21,
   },
   {
     key: 'smoke-test',
@@ -181,7 +159,6 @@ export const evaluationNotes = [
     topic: 'Operations',
     tags: ['smoke', 'search'],
     content: 'Staging smoke test 要确认 created 或 edited note 在 60 seconds 内可搜索。',
-    embeddingIndex: 22,
   },
   {
     key: 'password-rotation',
@@ -189,7 +166,6 @@ export const evaluationNotes = [
     topic: 'Operations',
     tags: ['password', 'launch'],
     content: '正式 launch 前 rotate Neon password，再更新 deployment DATABASE_URL。',
-    embeddingIndex: 23,
   },
   {
     key: 'context-diversity',
@@ -197,7 +173,6 @@ export const evaluationNotes = [
     topic: 'AI',
     tags: ['context', 'diversity'],
     content: 'Context selection 每个 note 最多 two chunks，总计最多 eight chunks。',
-    embeddingIndex: 24,
   },
   {
     key: 'question-rewrite',
@@ -205,7 +180,6 @@ export const evaluationNotes = [
     topic: 'AI',
     tags: ['question', 'rewrite'],
     content: 'Follow-up question rewrite 只使用最近的 user history，不拼接 assistant text。',
-    embeddingIndex: 25,
   },
   {
     key: 'content-hash',
@@ -213,7 +187,6 @@ export const evaluationNotes = [
     topic: 'Engineering',
     tags: ['hash', 'indexing'],
     content: 'Content hash 变化时重新 queue index job，metadata-only edit 不触发。',
-    embeddingIndex: 26,
   },
   {
     key: 'delete-cascade',
@@ -221,7 +194,6 @@ export const evaluationNotes = [
     topic: 'Engineering',
     tags: ['delete', 'cascade'],
     content: '删除 note 时 database cascade 会同时移除 chunks 和 index job。',
-    embeddingIndex: 27,
   },
   {
     key: 'safe-metrics',
@@ -229,7 +201,6 @@ export const evaluationNotes = [
     topic: 'Operations',
     tags: ['metrics', 'privacy'],
     content: 'Safe metrics 仅包含 duration、mode、counts 和 fixed failure category。',
-    embeddingIndex: 28,
   },
   {
     key: 'evidence-threshold',
@@ -237,7 +208,6 @@ export const evaluationNotes = [
     topic: 'AI',
     tags: ['evidence', 'evaluation'],
     content: 'Retrieval evaluation 要求 expected evidence top five hit rate 至少 90 percent。',
-    embeddingIndex: 29,
   },
 ]
 
@@ -264,8 +234,26 @@ export const evaluationQuestions = [
   { question: 'staging 搜索 smoke test 的时间要求？', expectedKey: 'smoke-test', expectedOrdinal: 0, expectedQuote: 'Staging smoke test 要确认 created 或 edited note 在 60 seconds 内可搜索。' },
 ]
 
-export function fixtureEmbedding(index) {
+export function fixtureEmbedding(value) {
+  const characters = Array.from(
+    String(value ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, ''),
+  )
+  const features = characters.length < 3
+    ? [characters.join('')]
+    : characters.slice(0, -2).map((_, index) => characters.slice(index, index + 3).join(''))
   const embedding = Array(1536).fill(0)
-  embedding[index] = 1
-  return embedding
+  for (const feature of new Set(features)) {
+    embedding[hashFeature(feature) % embedding.length] += 1
+  }
+  const magnitude = Math.hypot(...embedding) || 1
+  return embedding.map((value) => value / magnitude)
+}
+
+function hashFeature(value) {
+  let hash = 2166136261
+  for (const character of String(value)) {
+    hash ^= character.codePointAt(0)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
 }

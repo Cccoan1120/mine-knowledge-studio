@@ -19,7 +19,19 @@ export function createIndexingWorker({
 
   async function runOnce() {
     const startedAt = clock()
-    const job = await store.claimNextIndexJob()
+    let job
+    try {
+      job = await store.claimNextIndexJob()
+    } catch (error) {
+      emitMetric(logger, {
+        event: 'knowledge_index_job',
+        outcome: 'failed',
+        jobCount: 0,
+        durationMs: elapsedMs(clock, startedAt),
+        failureCategory: 'claim_failed',
+      })
+      throw error
+    }
     if (!job) return { status: 'idle' }
 
     try {
@@ -51,7 +63,19 @@ export function createIndexingWorker({
     } catch {
       const retryDelay = RETRY_DELAYS_MS[job.attempts - 1]
       const retryAt = retryDelay === undefined ? null : new Date(now().getTime() + retryDelay)
-      const recorded = await store.recordIndexJobFailure(job, { retryAt })
+      let recorded
+      try {
+        recorded = await store.recordIndexJobFailure(job, { retryAt })
+      } catch (error) {
+        emitMetric(logger, {
+          event: 'knowledge_index_job',
+          outcome: 'failed',
+          jobCount: 1,
+          durationMs: elapsedMs(clock, startedAt),
+          failureCategory: 'failure_record_failed',
+        })
+        throw error
+      }
       if (!recorded) {
         emitMetric(logger, {
           event: 'knowledge_index_job',

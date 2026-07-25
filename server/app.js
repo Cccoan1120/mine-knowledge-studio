@@ -212,7 +212,10 @@ function createDefaultQuestionService(store, logger) {
   const embeddingConfig = getEmbeddingConfig()
   return createRagQuestionService({
     store,
-    embeddingClient: embeddingConfig.apiKey ? createEmbeddingClient({ config: embeddingConfig }) : undefined,
+    embeddingClient: embeddingConfig.enabled && embeddingConfig.apiKey
+      ? createEmbeddingClient({ config: embeddingConfig })
+      : undefined,
+    embeddingEnabled: embeddingConfig.enabled,
     chatClient: chatConfig.apiKey ? createPlatformChatClient({ config: chatConfig }) : undefined,
     logger,
   })
