@@ -34,13 +34,18 @@ export type AIAnalysis = {
 
 export type AnswerResult = {
   answer: string
+  knowledgeAnswer?: string
+  generalSupplement?: string
   sourceIds: string[]
   citations: Citation[]
   insufficient: boolean
   mode: AIResultMode
+  retrievalMode?: RetrievalMode
+  scope?: AskScope
 }
 
 export type Citation = {
+  chunkId?: string
   noteId: string
   title: string
   quote: string
@@ -48,6 +53,31 @@ export type Citation = {
 }
 
 export type AIResultMode = 'model' | 'fallback'
+
+export type RetrievalMode = 'hybrid' | 'keyword' | 'basic'
+
+export type AskHistoryItem = {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export type AskScope = {
+  noteIds?: string[]
+  topics?: string[]
+  tags?: string[]
+}
+
+export type AskScopeMode = 'library' | 'current' | 'topic' | 'tag' | 'manual'
+
+export type IndexStatus = {
+  mode: 'hybrid' | 'basic'
+  total: number
+  pending: number
+  processing: number
+  ready: number
+  failed: number
+  missing: number
+}
 
 export type GeneratedResult = {
   markdown: string

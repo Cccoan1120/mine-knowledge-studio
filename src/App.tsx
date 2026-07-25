@@ -20,11 +20,12 @@ import {
   X,
 } from 'lucide-react'
 import './App.css'
-import { analyzeNote, answerQuestion, generateOutput, getPlatformAICapabilities, type PlatformAICapabilities } from './services/aiService'
+import { analyzeNote, answerQuestion, ensureIndex, generateOutput, getIndexStatus, getPlatformAICapabilities, retryIndex, type PlatformAICapabilities } from './services/aiService'
 import { getCurrentUser, login, logout, register } from './services/authService'
 import { bulkImportNotes, createNote as createCloudNote, deleteNote as deleteCloudNote, listNotes, updateNote as updateCloudNote } from './services/noteService'
 import { loadLocalNotesForMigration, markLocalNotesMigrated } from './services/storage'
-import type { AnswerResult, Citation, CurrentUser, GeneratedResult, ImportResult, Note, OutputType } from './types'
+import type { AnswerResult, AskHistoryItem, AskScopeMode, Citation, CurrentUser, GeneratedResult, ImportResult, IndexStatus, Note, OutputType } from './types'
+import { askScopeReady, buildAskScope } from './utils/askScope'
 import { extractTitle, parseMarkdownToNote, serializeNoteToMarkdown } from './utils/markdown'
 
 type DirectoryHandle = {
@@ -77,6 +78,11 @@ function App() {
   const [tagInput, setTagInput] = useState('')
   const [question, setQuestion] = useState('我收集过哪些关于素材复用和内容输出的观点？')
   const [answer, setAnswer] = useState<AnswerResult | null>(null)
+  const [conversation, setConversation] = useState<AskHistoryItem[]>([])
+  const [askScopeMode, setAskScopeMode] = useState<AskScopeMode>('library')
+  const [askTopics, setAskTopics] = useState<string[]>([])
+  const [askTags, setAskTags] = useState<string[]>([])
+  const [askSelectedSourceIds, setAskSelectedSourceIds] = useState<string[]>([])
   const [outputType, setOutputType] = useState<OutputType>('outline')
   const [generatedResult, setGeneratedResult] = useState<GeneratedResult | null>(null)
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([])
@@ -86,6 +92,9 @@ function App() {
   const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving' | 'error'>('saved')
   const [lastSavedAt, setLastSavedAt] = useState('')
   const [aiCapabilities, setAiCapabilities] = useState<PlatformAICapabilities | null>(null)
+  const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null)
+  const [libraryLoaded, setLibraryLoaded] = useState(false)
+  const [indexRefreshToken, setIndexRefreshToken] = useState(0)
   const [showSettings, setShowSettings] = useState(false)
   const [showImportPanel, setShowImportPanel] = useState(false)
   const [localMigrationNotes, setLocalMigrationNotes] = useState<Note[]>([])
@@ -132,6 +141,31 @@ function App() {
       })
       .finally(() => setAuthLoading(false))
   }, [])
+  useEffect(() => {
+    if (!user || !libraryLoaded) return
+
+    let disposed = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const poll = async () => {
+      try {
+        const nextStatus = await getIndexStatus()
+        if (disposed) return
+        setIndexStatus(nextStatus)
+        if (nextStatus.pending || nextStatus.processing || nextStatus.missing) timer = setTimeout(poll, 5000)
+      } catch (error) {
+        if (!disposed) setStatus(error instanceof Error ? error.message : '索引状态暂时不可用。')
+      }
+    }
+
+    void ensureIndex().then(poll).catch((error) => {
+      if (!disposed) setStatus(error instanceof Error ? error.message : '索引初始化暂时不可用。')
+    })
+
+    return () => {
+      disposed = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [user, libraryLoaded, indexRefreshToken])
 
   useEffect(() => localStorage.setItem(assistantWidthKey, String(assistantWidth)), [assistantWidth])
   useEffect(() => localStorage.setItem(assistantVisibleKey, String(showAssistant)), [showAssistant])
@@ -235,6 +269,7 @@ function App() {
     setNotes(cloudNotes)
     setSelectedId((current) => (cloudNotes.some((note) => note.id === current) ? current : cloudNotes[0]?.id ?? ''))
     setStatus(cloudNotes.length ? `已加载 ${cloudNotes.length} 条云端素材。` : '你的云端素材库还是空的，可以新建或导入第一条素材。')
+    setLibraryLoaded(true)
   }
 
   async function refreshAICapabilities() {
@@ -268,6 +303,10 @@ function App() {
     setUser(null)
     setNotes([])
     setSelectedId('')
+    setAnswer(null)
+    setConversation([])
+    setIndexStatus(null)
+    setLibraryLoaded(false)
     setStatus('已退出登录。')
   }
 
@@ -503,13 +542,23 @@ function App() {
 
   async function askKnowledgeBase() {
     if (!question.trim()) return
+    const scope = buildAskScope(askScopeMode, selectedNote, askTopics, askTags, askSelectedSourceIds)
+    if (!askScopeReady(askScopeMode, scope)) {
+      setStatus('请先完成问答范围选择。')
+      return
+    }
     setActiveAssistantTab('ask')
     setBusy('question')
 
     try {
-      const sourceNotes = notes.filter((note) => selectedSourceIds.includes(note.id))
-      const result = await answerQuestion(question, sourceNotes.length ? sourceNotes : selectedNote ? [selectedNote] : notes)
+      const result = await answerQuestion(question, notes, conversation.slice(-6), scope)
       setAnswer(result)
+      setConversation((current) => [
+        ...current,
+        { role: 'user', content: question.trim() },
+        { role: 'assistant', content: result.knowledgeAnswer || result.answer },
+      ])
+      setQuestion('')
       setStatus(
         result.insufficient
           ? '当前所选来源不足，已给出缺口提示。'
@@ -556,6 +605,35 @@ function App() {
       }
       return [...current, noteId]
     })
+  }
+
+  function toggleAskSource(noteId: string) {
+    setAskSelectedSourceIds((current) => {
+      if (current.includes(noteId)) return current.filter((id) => id !== noteId)
+      if (current.length >= 20) {
+        setStatus('一次最多选择 20 条素材。')
+        return current
+      }
+      return [...current, noteId]
+    })
+  }
+
+  function startNewConversation() {
+    setConversation([])
+    setAnswer(null)
+    setQuestion('')
+  }
+
+  async function retryFailedIndex() {
+    setBusy('index-retry')
+    try {
+      setIndexStatus(await retryIndex())
+      setIndexRefreshToken((current) => current + 1)
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '索引重试失败。')
+    } finally {
+      setBusy('')
+    }
   }
 
   function openCitation(citation: Citation) {
@@ -908,6 +986,20 @@ function App() {
             onSaveOutput={saveOutputAsNote}
             onSelectNote={setSelectedId}
             onOpenCitation={openCitation}
+            askScopeMode={askScopeMode}
+            setAskScopeMode={setAskScopeMode}
+            askTopics={askTopics}
+            setAskTopics={setAskTopics}
+            askTags={askTags}
+            setAskTags={setAskTags}
+            askSelectedSourceIds={askSelectedSourceIds}
+            onToggleAskSource={toggleAskSource}
+            askScopeReady={askScopeReady(askScopeMode, buildAskScope(askScopeMode, selectedNote, askTopics, askTags, askSelectedSourceIds))}
+            conversationCount={conversation.length}
+            onNewConversation={startNewConversation}
+            indexStatus={indexStatus}
+            retrievalMode={aiCapabilities?.retrievalMode}
+            onRetryIndex={retryFailedIndex}
           />
         </Suspense>
       ) : showAssistant ? (

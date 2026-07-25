@@ -1,7 +1,7 @@
-import { Bot, FileText, Loader2, MessageSquareText, PanelRightClose, Save, Sparkles } from 'lucide-react'
+import { Bot, FileText, Loader2, MessageSquareText, PanelRightClose, RotateCcw, Save, Sparkles } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { AnswerResult, Citation, GeneratedResult, Note, OutputType } from '../types'
+import type { AnswerResult, AskScopeMode, Citation, GeneratedResult, IndexStatus, Note, OutputType, RetrievalMode } from '../types'
 
 type AssistantPanelProps = {
   width: number
@@ -26,6 +26,20 @@ type AssistantPanelProps = {
   onSaveOutput: () => void
   onSelectNote: (id: string) => void
   onOpenCitation: (citation: Citation) => void
+  askScopeMode?: AskScopeMode
+  setAskScopeMode?: (mode: AskScopeMode) => void
+  askTopics?: string[]
+  setAskTopics?: (topics: string[]) => void
+  askTags?: string[]
+  setAskTags?: (tags: string[]) => void
+  askSelectedSourceIds?: string[]
+  onToggleAskSource?: (id: string) => void
+  askScopeReady?: boolean
+  conversationCount?: number
+  onNewConversation?: () => void
+  indexStatus?: IndexStatus | null
+  retrievalMode?: RetrievalMode
+  onRetryIndex?: () => void
 }
 
 export function AssistantPanel({
@@ -51,7 +65,24 @@ export function AssistantPanel({
   onSaveOutput,
   onSelectNote,
   onOpenCitation,
+  askScopeMode = 'library',
+  setAskScopeMode,
+  askTopics = [],
+  setAskTopics,
+  askTags = [],
+  setAskTags,
+  askSelectedSourceIds = [],
+  onToggleAskSource,
+  askScopeReady = true,
+  conversationCount = 0,
+  onNewConversation,
+  indexStatus,
+  retrievalMode = 'basic',
+  onRetryIndex,
 }: AssistantPanelProps) {
+  const topicOptions = Array.from(new Set(notes.map((item) => item.topic).filter(Boolean))).sort((a, b) => a.localeCompare(b))
+  const tagOptions = Array.from(new Set(notes.flatMap((item) => item.tags).filter(Boolean))).sort((a, b) => a.localeCompare(b))
+  const actualRetrievalMode = answer?.retrievalMode ?? retrievalMode
   return (
     <aside className="assistant-panel" style={{ width }} aria-label="素材助手">
       <button type="button" className="resize-handle" onMouseDown={onResizeStart} aria-label="调整 AI 面板宽度" />
@@ -81,6 +112,7 @@ export function AssistantPanel({
         </button>
       </div>
 
+      {activeTab !== 'ask' ? (
       <details className="source-picker">
         <summary>引用来源 <span>{selectedSourceIds.length}/20</span></summary>
         <div>
@@ -96,6 +128,7 @@ export function AssistantPanel({
           ))}
         </div>
       </details>
+      ) : null}
 
       {activeTab === 'organize' ? (
         <section className="assistant-section">
@@ -142,8 +175,63 @@ export function AssistantPanel({
 
       {activeTab === 'ask' ? (
         <section className="assistant-section">
+          <div className="ask-status">
+            <span className={`result-mode result-mode-${actualRetrievalMode}`}>{retrievalModeLabel(actualRetrievalMode)}</span>
+            {indexStatus ? <span>索引覆盖 {indexStatus.ready}/{indexStatus.total}</span> : null}
+            {indexStatus && (indexStatus.pending || indexStatus.processing || indexStatus.missing) ? (
+              <span>待处理 {indexStatus.pending + indexStatus.processing + indexStatus.missing}</span>
+            ) : null}
+            {indexStatus?.failed ? (
+              <button type="button" onClick={onRetryIndex} disabled={busy === 'index-retry'}>重试 {indexStatus.failed} 项失败</button>
+            ) : null}
+          </div>
+          <label className="ask-scope-control">
+            问答范围
+            <select value={askScopeMode} onChange={(event) => setAskScopeMode?.(event.target.value as AskScopeMode)}>
+              <option value="library">整个素材库</option>
+              <option value="current" disabled={!note}>当前素材</option>
+              <option value="topic">按主题</option>
+              <option value="tag">按标签</option>
+              <option value="manual">手动选择素材</option>
+            </select>
+          </label>
+          {askScopeMode === 'topic' ? (
+            <label className="ask-scope-control">
+              选择主题
+              <select multiple value={askTopics} onChange={(event) => setAskTopics?.(Array.from(event.target.selectedOptions, (option) => option.value))}>
+                {topicOptions.map((topic) => <option key={topic} value={topic}>{topic}</option>)}
+              </select>
+            </label>
+          ) : null}
+          {askScopeMode === 'tag' ? (
+            <label className="ask-scope-control">
+              选择标签
+              <select multiple value={askTags} onChange={(event) => setAskTags?.(Array.from(event.target.selectedOptions, (option) => option.value))}>
+                {tagOptions.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+              </select>
+            </label>
+          ) : null}
+          {askScopeMode === 'manual' ? (
+            <details className="source-picker" open>
+              <summary>选择素材 <span>{askSelectedSourceIds.length}/20</span></summary>
+              <div>
+                {notes.map((source) => (
+                  <label key={source.id}>
+                    <input type="checkbox" checked={askSelectedSourceIds.includes(source.id)} onChange={() => onToggleAskSource?.(source.id)} />
+                    <span>{source.title}</span>
+                  </label>
+                ))}
+              </div>
+            </details>
+          ) : null}
+          <div className="ask-actions">
+            <span>{scopeLabel(answer?.scope, askScopeMode, note)}</span>
+            <button type="button" onClick={onNewConversation} disabled={!conversationCount} aria-label="新建对话" title="新建对话">
+              <RotateCcw size={15} />
+            </button>
+          </div>
           <textarea value={question} placeholder="针对素材库提一个问题" onChange={(event) => setQuestion(event.target.value)} />
-          <button type="button" className="primary-action" onClick={onAsk} disabled={busy === 'question'}>
+          <button type="button" className="primary-action" onClick={onAsk} disabled={busy === 'question' || !askScopeReady}>
             {busy === 'question' ? <Loader2 className="spin" size={16} /> : <Bot size={16} />}
             基于来源回答
           </button>
@@ -152,7 +240,8 @@ export function AssistantPanel({
               <span className={`result-mode result-mode-${answer.mode}`}>
                 {answer.mode === 'model' ? '平台模型生成' : '本地规则生成'}
               </span>
-              <p>{answer.answer}</p>
+              <p className="section-kicker">来自我的知识库</p>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer.knowledgeAnswer || answer.answer}</ReactMarkdown>
               <div className="citation-list">
                 {answer.citations.map((citation) => (
                   <button type="button" key={`${citation.noteId}-${citation.quote}`} onClick={() => onOpenCitation(citation)}>
@@ -161,6 +250,13 @@ export function AssistantPanel({
                   </button>
                 ))}
               </div>
+              {answer.insufficient && answer.generalSupplement ? (
+                <div className="answer-supplement">
+                  <p className="section-kicker">模型补充</p>
+                  <p>个人知识库中的证据不足，以下模型补充不由素材引用支持。</p>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer.generalSupplement}</ReactMarkdown>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </section>
@@ -204,4 +300,16 @@ export function AssistantPanel({
       ) : null}
     </aside>
   )
+}
+
+function retrievalModeLabel(mode: RetrievalMode) {
+  return mode === 'hybrid' ? 'Hybrid RAG' : mode === 'keyword' ? 'Keyword retrieval' : 'Basic retrieval'
+}
+
+function scopeLabel(scope: AnswerResult['scope'], mode: AskScopeMode, note?: Note) {
+  if (scope?.noteIds?.length) return `实际范围：${scope.noteIds.length} 条素材`
+  if (scope?.topics?.length) return `实际范围：${scope.topics.join('、')}`
+  if (scope?.tags?.length) return `实际范围：${scope.tags.join('、')}`
+  if (mode === 'current' && note) return `实际范围：${note.title}`
+  return '实际范围：整个素材库'
 }

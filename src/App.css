@@ -1119,6 +1119,74 @@ select {
   margin: 12px 0;
 }
 
+.ask-status,
+.ask-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.ask-status .result-mode {
+  margin: 0;
+}
+
+.ask-status button,
+.ask-actions button {
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--ink);
+  background: var(--surface-subtle);
+  font-size: 11px;
+}
+
+.ask-scope-control {
+  display: grid;
+  gap: 6px;
+  padding: 8px 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ask-scope-control select {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--surface-subtle);
+  font: inherit;
+  font-weight: 500;
+}
+
+.ask-scope-control select[multiple] {
+  min-height: 92px;
+}
+
+.ask-actions {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+}
+
+.answer-supplement {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.answer-supplement > p:not(.section-kicker) {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
 .source-list {
   display: flex;
   flex-wrap: wrap;

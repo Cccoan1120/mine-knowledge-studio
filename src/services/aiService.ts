@@ -1,4 +1,4 @@
-import type { AIAnalysis, AnswerResult, Citation, GeneratedResult, Note, OutputType } from '../types'
+import type { AIAnalysis, AnswerResult, AskHistoryItem, AskScope, Citation, GeneratedResult, IndexStatus, Note, OutputType, RetrievalMode } from '../types'
 import { extractTitle } from '../utils/markdown'
 
 export type PlatformAICapabilities = {
@@ -8,11 +8,14 @@ export type PlatformAICapabilities = {
   model: string
   visionModel: string
   transcriptionModel: string
+  embeddingConfigured: boolean
+  retrievalMode: RetrievalMode
 }
 
 export async function getPlatformAICapabilities(): Promise<PlatformAICapabilities> {
-  const response = await fetch('/api/ai/capabilities')
-  if (!response.ok) {
+  try {
+    const response = await fetch('/api/ai/capabilities')
+    if (response.ok) return response.json()
     return {
       chatConfigured: false,
       visionConfigured: false,
@@ -20,9 +23,39 @@ export async function getPlatformAICapabilities(): Promise<PlatformAICapabilitie
       model: 'fallback',
       visionModel: 'fallback',
       transcriptionModel: 'fallback',
+      embeddingConfigured: false,
+      retrievalMode: 'basic',
+    }
+  } catch {
+    return {
+      chatConfigured: false,
+      visionConfigured: false,
+      transcriptionConfigured: false,
+      model: 'fallback',
+      visionModel: 'fallback',
+      transcriptionModel: 'fallback',
+      embeddingConfigured: false,
+      retrievalMode: 'basic',
     }
   }
-  return response.json()
+}
+
+export async function ensureIndex(): Promise<IndexStatus> {
+  const response = await fetch('/api/ai/index/ensure', { method: 'POST' })
+  if (!response.ok) throw await responseError(response)
+  return ((await response.json()) as { status: IndexStatus }).status
+}
+
+export async function getIndexStatus(): Promise<IndexStatus> {
+  const response = await fetch('/api/ai/index/status')
+  if (!response.ok) throw await responseError(response)
+  return ((await response.json()) as { status: IndexStatus }).status
+}
+
+export async function retryIndex(): Promise<IndexStatus> {
+  const response = await fetch('/api/ai/index/retry', { method: 'POST' })
+  if (!response.ok) throw await responseError(response)
+  return ((await response.json()) as { status: IndexStatus }).status
 }
 
 export async function analyzeNote(note: Note, existingNotes: Note[]): Promise<AIAnalysis> {
@@ -41,19 +74,19 @@ export async function analyzeNote(note: Note, existingNotes: Note[]): Promise<AI
   }
 }
 
-export async function answerQuestion(question: string, notes: Note[]): Promise<AnswerResult> {
+export async function answerQuestion(question: string, notes: Note[], history: AskHistoryItem[] = [], scope?: AskScope): Promise<AnswerResult> {
   try {
     const response = await fetch('/api/ai/ask', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, noteIds: notes.slice(0, 20).map((note) => note.id) }),
+      body: JSON.stringify({ question, history: history.slice(-6), ...(scope ? { scope } : {}) }),
     })
     if (!response.ok) throw await responseError(response)
     const data = (await response.json()) as { result?: AnswerResult }
-    return data.result ?? mockAnswerQuestion(question, notes)
+    return data.result ?? mockAnswerQuestion(question, notesForScope(notes, scope), scope)
   } catch (error) {
     if (error instanceof ServerAIError) throw error
-    return mockAnswerQuestion(question, notes)
+    return mockAnswerQuestion(question, notesForScope(notes, scope), scope)
   }
 }
 
@@ -105,7 +138,7 @@ function mockAnalyzeNote(note: Note, existingNotes: Note[]): AIAnalysis {
   }
 }
 
-function mockAnswerQuestion(question: string, notes: Note[]): AnswerResult {
+function mockAnswerQuestion(question: string, notes: Note[], scope?: AskScope): AnswerResult {
   const scored = notes
     .map((note) => ({
       note,
@@ -118,21 +151,38 @@ function mockAnswerQuestion(question: string, notes: Note[]): AnswerResult {
   if (!scored.length) {
     return {
       answer: '现有素材库里没有足够信息回答这个问题。可以先导入相关素材，或换一个更贴近当前素材的问题。',
+      knowledgeAnswer: '现有素材库里没有足够信息回答这个问题。可以先导入相关素材，或换一个更贴近当前素材的问题。',
+      generalSupplement: '',
       sourceIds: [],
       citations: [],
       insufficient: true,
       mode: 'fallback',
+      retrievalMode: 'basic',
+      scope: scope ?? {},
     }
   }
 
   const citations = scored.map(({ note }) => citationFromNote(note))
+  const knowledgeAnswer = scored.map(({ note }) => `从「${note.title}」看：${note.summary || summarize(note.content)}`).join('\n\n')
   return {
-    answer: scored.map(({ note }) => `从「${note.title}」看：${note.summary || summarize(note.content)}`).join('\n\n'),
+    answer: knowledgeAnswer,
+    knowledgeAnswer,
+    generalSupplement: '',
     sourceIds: citations.map((citation) => citation.noteId),
     citations,
     insufficient: false,
     mode: 'fallback',
+    retrievalMode: 'basic',
+    scope: scope ?? {},
   }
+}
+
+function notesForScope(notes: Note[], scope?: AskScope) {
+  if (!scope) return notes
+  if (scope.noteIds?.length) return notes.filter((note) => scope.noteIds?.includes(note.id))
+  if (scope.topics?.length) return notes.filter((note) => scope.topics?.includes(note.topic))
+  if (scope.tags?.length) return notes.filter((note) => note.tags.some((tag) => scope.tags?.includes(tag)))
+  return notes
 }
 
 function mockGenerateOutput(type: OutputType, notes: Note[]): GeneratedResult {
