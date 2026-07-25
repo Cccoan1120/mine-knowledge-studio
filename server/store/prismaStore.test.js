@@ -485,3 +485,87 @@ describe('Prisma indexing store', () => {
     expect(transaction.knowledgeIndexJob.updateMany).not.toHaveBeenCalled()
   })
 })
+
+describe('Prisma knowledge retrieval', () => {
+  it('issues user-isolated dense and keyword queries with parameterized scope filters', async () => {
+    const calls = []
+    const prisma = {
+      $queryRawUnsafe: vi.fn(async (query, ...parameters) => {
+        calls.push({ query, parameters })
+        return [{
+          id: calls.length === 1 ? 'dense-chunk' : 'keyword-chunk',
+          noteId: 'note-1',
+          ordinal: 2,
+          title: 'Trusted title',
+          source: 'https://example.test/source',
+          headingPath: ['Section'],
+          content: 'Trusted content',
+          startOffset: 10,
+          endOffset: 25,
+          score: calls.length === 1 ? 0.8 : 0.7,
+        }]
+      }),
+    }
+    const store = createPrismaStore({ prisma })
+    const queryEmbedding = Array(1536).fill(0.125)
+    const scope = {
+      noteIds: ['note-user-value'],
+      topics: ['topic-user-value'],
+      tags: ['tag-user-value'],
+    }
+
+    const result = await store.retrieveKnowledgeCandidates({
+      userId: 'user-1',
+      searchTokens: 'alpha beta',
+      queryEmbedding,
+      scope,
+      denseLimit: 30,
+      keywordLimit: 30,
+    })
+
+    expect(result.dense).toEqual([expect.objectContaining({ id: 'dense-chunk', score: 0.8 })])
+    expect(result.keyword).toEqual([expect.objectContaining({ id: 'keyword-chunk', score: 0.7 })])
+    expect(calls).toHaveLength(2)
+    for (const { query, parameters } of calls) {
+      expect(query).toContain('INNER JOIN "Note"')
+      expect(query).toContain('chunk."userId" = $1')
+      expect(query).toContain('note."userId" = $1')
+      expect(query).toContain('chunk."noteId"')
+      expect(query).toContain('note."topic"')
+      expect(query).toContain('note."tags" &&')
+      expect(parameters[0]).toBe('user-1')
+      expect(parameters).toContainEqual(scope.noteIds)
+      expect(parameters).toContainEqual(scope.topics)
+      expect(parameters).toContainEqual(scope.tags)
+      expect(query).not.toContain('note-user-value')
+      expect(query).not.toContain('topic-user-value')
+      expect(query).not.toContain('tag-user-value')
+    }
+    expect(calls[0].query).toContain('<=>')
+    expect(calls[0].parameters[1]).toContain('[0.125,0.125')
+    expect(calls[1].query).toContain("to_tsvector('simple'")
+    expect(calls[1].query).toContain("to_tsquery('simple'")
+    expect(calls[1].parameters).toContain('alpha | beta')
+  })
+
+  it('skips dense retrieval without an embedding and keyword retrieval without search terms', async () => {
+    const prisma = { $queryRawUnsafe: vi.fn(async () => []) }
+    const store = createPrismaStore({ prisma })
+
+    await expect(store.retrieveKnowledgeCandidates({
+      userId: 'user-1',
+      searchTokens: 'keyword',
+      scope: { noteIds: [], topics: [], tags: [] },
+    })).resolves.toEqual({ dense: [], keyword: [] })
+    expect(prisma.$queryRawUnsafe).toHaveBeenCalledOnce()
+
+    prisma.$queryRawUnsafe.mockClear()
+    await expect(store.retrieveKnowledgeCandidates({
+      userId: 'user-1',
+      searchTokens: '',
+      queryEmbedding: Array(1536).fill(0),
+      scope: { noteIds: [], topics: [], tags: [] },
+    })).resolves.toEqual({ dense: [], keyword: [] })
+    expect(prisma.$queryRawUnsafe).toHaveBeenCalledOnce()
+  })
+})

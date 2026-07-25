@@ -61,4 +61,12 @@ describe('embedding configuration', () => {
     expect(JSON.stringify(capabilities)).not.toContain('embedding-secret')
     expect(JSON.stringify(capabilities)).not.toContain('embedding.example.test')
   })
+
+  it('reports retrieval mode from storage and embedding availability', () => {
+    expect(getAICapabilities({ storageMode: 'memory' }).retrievalMode).toBe('basic')
+    expect(getAICapabilities({ storageMode: 'postgres' }).retrievalMode).toBe('keyword')
+
+    process.env.AI_EMBEDDING_API_KEY = 'embedding-secret'
+    expect(getAICapabilities({ storageMode: 'postgres' }).retrievalMode).toBe('hybrid')
+  })
 })

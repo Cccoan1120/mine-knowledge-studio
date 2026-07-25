@@ -5,12 +5,14 @@ import express from 'express'
 import helmet from 'helmet'
 import multer from 'multer'
 import { clearSessionCookie, loginUser, registerUser, requireAuth, setSessionCookie } from './auth.js'
-import { getAICapabilities, getPlatformAIConfig } from './ai/config.js'
-import { analyzeNote, answerQuestion, generateOutput } from './ai/service.js'
+import { getAICapabilities, getEmbeddingConfig, getPlatformAIConfig } from './ai/config.js'
+import { createEmbeddingClient } from './ai/embeddingClient.js'
+import { analyzeNote, generateOutput } from './ai/service.js'
 import { extractFromUrl, extractImage, extractMedia, getImportCapabilities } from './import/extractors.js'
 import { aiRateLimit, authRateLimit, importRateLimit, logServerError, publicError, requestContext, requireSameOrigin } from './security.js'
+import { createPlatformChatClient, createRagQuestionService } from './rag/questionService.js'
 import { createDefaultStore } from './store/index.js'
-import { assertUpload, validateBulkNotes, validateImportUrl, validateNoteIds, validateNoteInput, validateOutputType, validateQuestion } from './validation.js'
+import { assertUpload, validateAskRequest, validateBulkNotes, validateImportUrl, validateNoteIds, validateNoteInput, validateOutputType } from './validation.js'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const projectRoot = resolve(currentDir, '..')
@@ -26,6 +28,8 @@ export function createImportApp(options = {}) {
     limits: { fileSize: 50 * 1024 * 1024, files: 1 },
   })
   const store = options.store || createDefaultStore()
+  const logger = options.logger || console
+  const questionService = options.questionService || createDefaultQuestionService(store)
 
   app.set('trust proxy', 1)
   app.disable('x-powered-by')
@@ -52,6 +56,7 @@ export function createImportApp(options = {}) {
     try {
       const user = await registerUser(store, request.body)
       await setSessionCookie(response, user)
+      ensureIndexJobs(store, user.id, logger)
       response.status(201).json({ user })
     } catch (error) {
       sendError(request, response, error)
@@ -62,6 +67,7 @@ export function createImportApp(options = {}) {
     try {
       const user = await loginUser(store, request.body)
       await setSessionCookie(response, user)
+      ensureIndexJobs(store, user.id, logger)
       response.json({ user })
     } catch (error) {
       sendError(request, response, error)
@@ -105,7 +111,7 @@ export function createImportApp(options = {}) {
   app.use('/api/ai', requireAuth, aiRateLimit)
 
   app.get('/api/ai/capabilities', (_request, response) => {
-    response.json(getAICapabilities())
+    response.json(getAICapabilities({ storageMode: store.storageMode }))
   })
 
   app.post('/api/ai/analyze', async (request, response) => {
@@ -116,10 +122,24 @@ export function createImportApp(options = {}) {
   })
 
   app.post('/api/ai/ask', async (request, response) => {
-    const notes = await store.listNotes(request.user.id)
-    const requestedIds = new Set(validateNoteIds(request.body?.noteIds))
-    const sourceNotes = requestedIds.size ? notes.filter((note) => requestedIds.has(note.id)) : notes
-    response.json({ result: await answerQuestion(validateQuestion(request.body?.question), sourceNotes) })
+    const input = validateAskRequest(request.body)
+    response.json({ result: await questionService.ask({ userId: request.user.id, ...input }) })
+  })
+
+  app.post('/api/ai/index/ensure', async (request, response) => {
+    const ensured = await store.ensureIndexJobs(request.user.id)
+    const status = await store.getIndexStatus(request.user.id)
+    response.json({ queued: ensured.queued, status })
+  })
+
+  app.get('/api/ai/index/status', async (request, response) => {
+    response.json({ status: await store.getIndexStatus(request.user.id) })
+  })
+
+  app.post('/api/ai/index/retry', async (request, response) => {
+    const retried = await store.retryFailedIndexJobs(request.user.id)
+    const status = await store.getIndexStatus(request.user.id)
+    response.json({ retried, status })
   })
 
   app.post('/api/ai/generate', async (request, response) => {
@@ -132,7 +152,7 @@ export function createImportApp(options = {}) {
   app.use('/api/import', requireAuth, importRateLimit)
 
   app.get('/api/import/capabilities', async (_request, response) => {
-    response.json({ ...(await getImportCapabilities()), ...getAICapabilities() })
+    response.json({ ...(await getImportCapabilities()), ...getAICapabilities({ storageMode: store.storageMode }) })
   })
 
   app.post('/api/import/url', async (request, response) => {
@@ -185,6 +205,26 @@ export function createImportApp(options = {}) {
   })
 
   return app
+}
+
+function createDefaultQuestionService(store) {
+  const chatConfig = getPlatformAIConfig()
+  const embeddingConfig = getEmbeddingConfig()
+  return createRagQuestionService({
+    store,
+    embeddingClient: embeddingConfig.apiKey ? createEmbeddingClient({ config: embeddingConfig }) : undefined,
+    chatClient: chatConfig.apiKey ? createPlatformChatClient({ config: chatConfig }) : undefined,
+  })
+}
+
+function ensureIndexJobs(store, userId, logger) {
+  try {
+    Promise.resolve(store.ensureIndexJobs(userId)).catch(() => {
+      logger.error('Knowledge indexing ensure failed.')
+    })
+  } catch {
+    logger.error('Knowledge indexing ensure failed.')
+  }
 }
 
 function mountProductionClient(app, staticDir) {

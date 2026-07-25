@@ -31,6 +31,34 @@ export function validateQuestion(value) {
   return question
 }
 
+export function validateAskRequest(value) {
+  const input = plainObject(value) ? value : {}
+  const history = validateHistory(input.history)
+  const rawScope = input.scope
+  if (rawScope !== undefined && !plainObject(rawScope)) {
+    throw badRequest('Scope format is invalid.')
+  }
+
+  const scopeInput = rawScope || {}
+  const noteIds = Object.prototype.hasOwnProperty.call(scopeInput, 'noteIds')
+    ? uniqueStringArray(scopeInput.noteIds, 20, 100, 'Scope note IDs')
+    : validateNoteIds(input.noteIds)
+
+  return {
+    question: validateQuestion(input.question),
+    history,
+    scope: {
+      noteIds,
+      topics: Object.prototype.hasOwnProperty.call(scopeInput, 'topics')
+        ? uniqueStringArray(scopeInput.topics, 20, 100, 'Scope topics')
+        : [],
+      tags: Object.prototype.hasOwnProperty.call(scopeInput, 'tags')
+        ? uniqueStringArray(scopeInput.tags, 20, 100, 'Scope tags')
+        : [],
+    },
+  }
+}
+
 export function validateNoteIds(value) {
   return stringArray(value, 20, 128, '来源素材')
 }
@@ -74,6 +102,38 @@ function stringArray(value, maxItems, maxLength, label) {
   if (!Array.isArray(value)) throw badRequest(`${label}格式不正确。`)
   if (value.length > maxItems) throw badRequest(`${label}数量过多。`)
   return Array.from(new Set(value.map((item) => limitedString(item, maxLength, label).trim()).filter(Boolean)))
+}
+
+function validateHistory(value) {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) throw badRequest('History format is invalid.')
+  if (value.length > 6) throw badRequest('History has too many entries.')
+
+  return value.map((message) => {
+    if (!plainObject(message) || !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string') {
+      throw badRequest('History entry format is invalid.')
+    }
+    if (message.content.length > 2000) throw badRequest('History entry is too long.')
+    return { role: message.role, content: message.content }
+  })
+}
+
+function uniqueStringArray(value, maxItems, maxLength, label) {
+  if (!Array.isArray(value)) throw badRequest(`${label} format is invalid.`)
+  if (value.length > maxItems) throw badRequest(`${label} has too many values.`)
+  if (value.some((item) => typeof item !== 'string' || item.length > maxLength)) {
+    throw badRequest(`${label} contains an invalid value.`)
+  }
+
+  const normalized = value.map((item) => item.trim()).filter(Boolean)
+  if (new Set(normalized).size !== normalized.length) {
+    throw badRequest(`${label} values must be unique.`)
+  }
+  return normalized
+}
+
+function plainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
 function limitedString(value, maxLength, label) {

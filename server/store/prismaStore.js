@@ -8,6 +8,8 @@ const require = createRequire(import.meta.url)
 export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
 
   return {
+    storageMode: 'postgres',
+
     async healthCheck() {
       await prisma.$queryRawUnsafe('SELECT 1')
       return true
@@ -199,6 +201,100 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
         },
       })
       return result.count
+    },
+
+    async retrieveKnowledgeCandidates({
+      userId,
+      searchTokens,
+      queryEmbedding,
+      scope = {},
+      denseLimit = 30,
+      keywordLimit = 30,
+    }) {
+      const dense = []
+      const keyword = []
+
+      if (queryEmbedding !== undefined) {
+        if (!Array.isArray(queryEmbedding) || queryEmbedding.length !== 1536) {
+          throw new Error('Query embedding must contain 1536 dimensions.')
+        }
+        const denseScope = scopeFilters(scope, 3)
+        const denseParameters = [
+          userId,
+          vectorLiteral(queryEmbedding),
+          ...denseScope.parameters,
+          denseLimit,
+        ]
+        const limitPlaceholder = `$${denseParameters.length}`
+        const rows = await prisma.$queryRawUnsafe(
+          `
+            SELECT
+              chunk."id",
+              chunk."noteId",
+              chunk."ordinal",
+              note."title",
+              note."source",
+              chunk."headingPath",
+              chunk."content",
+              chunk."startOffset",
+              chunk."endOffset",
+              1 - (chunk."embedding" <=> $2::vector) AS "score"
+            FROM "KnowledgeChunk" AS chunk
+            INNER JOIN "Note" AS note
+              ON note."id" = chunk."noteId"
+              AND note."userId" = $1
+            WHERE chunk."userId" = $1
+              ${denseScope.sql}
+            ORDER BY chunk."embedding" <=> $2::vector, chunk."id"
+            LIMIT ${limitPlaceholder}::int
+          `,
+          ...denseParameters,
+        )
+        dense.push(...rows.map(normalizeCandidate))
+      }
+
+      const terms = String(searchTokens || '').split(/\s+/).filter(Boolean)
+      if (terms.length) {
+        const keywordScope = scopeFilters(scope, 3)
+        const keywordParameters = [
+          userId,
+          terms.join(' | '),
+          ...keywordScope.parameters,
+          keywordLimit,
+        ]
+        const limitPlaceholder = `$${keywordParameters.length}`
+        const rows = await prisma.$queryRawUnsafe(
+          `
+            SELECT
+              chunk."id",
+              chunk."noteId",
+              chunk."ordinal",
+              note."title",
+              note."source",
+              chunk."headingPath",
+              chunk."content",
+              chunk."startOffset",
+              chunk."endOffset",
+              ts_rank_cd(
+                to_tsvector('simple', chunk."searchTokens"),
+                to_tsquery('simple', $2)
+              ) AS "score"
+            FROM "KnowledgeChunk" AS chunk
+            INNER JOIN "Note" AS note
+              ON note."id" = chunk."noteId"
+              AND note."userId" = $1
+            WHERE chunk."userId" = $1
+              AND to_tsvector('simple', chunk."searchTokens") @@ to_tsquery('simple', $2)
+              ${keywordScope.sql}
+            ORDER BY "score" DESC, chunk."id"
+            LIMIT ${limitPlaceholder}::int
+          `,
+          ...keywordParameters,
+        )
+        keyword.push(...rows.map(normalizeCandidate))
+      }
+
+      return { dense, keyword }
     },
 
     async claimNextIndexJob() {
@@ -401,4 +497,41 @@ function upsertIndexJob(transaction, { userId, noteId, contentHash }) {
 
 function vectorLiteral(embedding) {
   return `[${embedding.join(',')}]`
+}
+
+function scopeFilters(scope, firstParameter) {
+  const clauses = []
+  const parameters = []
+
+  for (const [field, clause] of [
+    ['noteIds', (placeholder) => `chunk."noteId" = ANY(${placeholder}::text[])`],
+    ['topics', (placeholder) => `note."topic" = ANY(${placeholder}::text[])`],
+    ['tags', (placeholder) => `note."tags" && ${placeholder}::text[]`],
+  ]) {
+    const values = Array.isArray(scope[field]) ? scope[field] : []
+    if (!values.length) continue
+    const placeholder = `$${firstParameter + parameters.length}`
+    clauses.push(clause(placeholder))
+    parameters.push(values)
+  }
+
+  return {
+    sql: clauses.length ? `AND ${clauses.join('\n              AND ')}` : '',
+    parameters,
+  }
+}
+
+function normalizeCandidate(candidate) {
+  return {
+    id: String(candidate.id),
+    noteId: String(candidate.noteId),
+    ordinal: Number(candidate.ordinal),
+    title: String(candidate.title || ''),
+    source: String(candidate.source || ''),
+    headingPath: Array.isArray(candidate.headingPath) ? candidate.headingPath.map(String) : [],
+    content: String(candidate.content || ''),
+    startOffset: Number(candidate.startOffset),
+    endOffset: Number(candidate.endOffset),
+    score: Number(candidate.score),
+  }
 }

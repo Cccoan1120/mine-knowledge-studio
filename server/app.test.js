@@ -4,8 +4,9 @@ import { createServer } from 'node:http'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createImportApp } from './app.js'
+import { createMemoryStore } from './store/memoryStore.js'
 
 let servers = []
 let tempDirs = []
@@ -335,6 +336,140 @@ describe('AI citations', () => {
     const otherResult = (await otherResponse.json()).result
     expect(otherResult.citations).toEqual([])
     expect(otherResult.sourceIds).toEqual([])
+  })
+})
+
+describe('RAG question and index APIs', () => {
+  it('validates history and scope before invoking the question service', async () => {
+    const questionService = { ask: vi.fn() }
+    const apiUrl = await serveApp({ questionService })
+    const session = await registerSession(apiUrl, 'rag-validation@example.com')
+    const invalidBodies = [
+      { question: 'Valid question?', history: 'not-an-array' },
+      { question: 'Valid question?', history: Array.from({ length: 7 }, () => ({ role: 'user', content: 'x' })) },
+      { question: 'Valid question?', history: [{ role: 'system', content: 'x' }] },
+      { question: 'Valid question?', history: [{ role: 'user', content: 'x'.repeat(2001) }] },
+      { question: 'Valid question?', scope: [] },
+      { question: 'Valid question?', scope: { topics: 'not-an-array' } },
+      { question: 'Valid question?', scope: { tags: ['same', 'same'] } },
+      { question: 'Valid question?', scope: { noteIds: Array.from({ length: 21 }, (_, index) => `note-${index}`) } },
+      { question: 'Valid question?', scope: { topics: ['x'.repeat(101)] } },
+    ]
+
+    for (const body of invalidBodies) {
+      const response = await fetch(`${apiUrl}/api/ai/ask`, {
+        method: 'POST',
+        headers: authHeaders(session.cookie, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify(body),
+      })
+      expect(response.status, JSON.stringify(body)).toBe(400)
+    }
+    expect(questionService.ask).not.toHaveBeenCalled()
+  })
+
+  it('uses scoped note ids ahead of legacy note ids and returns the effective scope', async () => {
+    const questionService = {
+      ask: vi.fn(async (input) => ({
+        knowledgeAnswer: input.question,
+        generalSupplement: '',
+        answer: input.question,
+        sourceIds: [],
+        citations: [],
+        insufficient: true,
+        mode: 'fallback',
+        retrievalMode: 'basic',
+        scope: input.scope,
+      })),
+    }
+    const apiUrl = await serveApp({ questionService })
+    const session = await registerSession(apiUrl, 'rag-scope@example.com')
+
+    const scopedResponse = await fetch(`${apiUrl}/api/ai/ask`, {
+      method: 'POST',
+      headers: authHeaders(session.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        question: 'Which notes apply?',
+        noteIds: ['legacy-note'],
+        history: [{ role: 'user', content: 'Earlier question' }],
+        scope: { noteIds: ['scoped-note'], topics: ['Research'], tags: ['rag'] },
+      }),
+    })
+    const scopedResult = (await scopedResponse.json()).result
+    expect(scopedResponse.ok).toBe(true)
+    expect(scopedResult.scope).toEqual({
+      noteIds: ['scoped-note'],
+      topics: ['Research'],
+      tags: ['rag'],
+    })
+
+    const legacyResponse = await fetch(`${apiUrl}/api/ai/ask`, {
+      method: 'POST',
+      headers: authHeaders(session.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ question: 'Legacy selection?', noteIds: ['legacy-note'] }),
+    })
+    const legacyResult = (await legacyResponse.json()).result
+    expect(legacyResult.scope).toEqual({ noteIds: ['legacy-note'], topics: [], tags: [] })
+    expect(questionService.ask).toHaveBeenCalledWith(expect.objectContaining({
+      userId: session.user.id,
+      history: [{ role: 'user', content: 'Earlier question' }],
+    }))
+  })
+
+  it('exposes authenticated ensure, status, and retry operations with user-isolated status', async () => {
+    const store = createMemoryStore()
+    const apiUrl = await serveApp({ store })
+    const owner = await registerSession(apiUrl, 'index-owner@example.com')
+    const other = await registerSession(apiUrl, 'index-other@example.com')
+    await fetch(`${apiUrl}/api/notes`, {
+      method: 'POST',
+      headers: authHeaders(owner.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ title: 'Owner note', content: 'Owner-only content' }),
+    })
+
+    const ensure = await fetch(`${apiUrl}/api/ai/index/ensure`, {
+      method: 'POST',
+      headers: authHeaders(owner.cookie),
+    }).then((response) => response.json())
+    const ownerStatus = await fetch(`${apiUrl}/api/ai/index/status`, {
+      headers: authHeaders(owner.cookie),
+    }).then((response) => response.json())
+    const otherStatus = await fetch(`${apiUrl}/api/ai/index/status`, {
+      headers: authHeaders(other.cookie),
+    }).then((response) => response.json())
+    const retry = await fetch(`${apiUrl}/api/ai/index/retry`, {
+      method: 'POST',
+      headers: authHeaders(owner.cookie),
+    }).then((response) => response.json())
+
+    expect(ensure).toEqual({
+      queued: 0,
+      status: expect.objectContaining({ mode: 'basic', total: 1, missing: 1 }),
+    })
+    expect(ownerStatus.status.total).toBe(1)
+    expect(otherStatus.status.total).toBe(0)
+    expect(retry).toEqual({
+      retried: 0,
+      status: expect.objectContaining({ mode: 'basic', total: 1 }),
+    })
+  })
+
+  it('does not delay successful register or login while ensuring index jobs', async () => {
+    const store = createMemoryStore()
+    store.ensureIndexJobs = vi.fn(() => new Promise(() => {}))
+    const apiUrl = await serveApp({ store })
+
+    const registered = await registerSession(apiUrl, 'index-auth@example.com')
+    expect(registered.user.email).toBe('index-auth@example.com')
+
+    const loginResponse = await fetch(`${apiUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'index-auth@example.com', password: 'secret123' }),
+    })
+    expect(loginResponse.ok).toBe(true)
+    expect(store.ensureIndexJobs).toHaveBeenCalledTimes(2)
+    expect(store.ensureIndexJobs).toHaveBeenNthCalledWith(1, registered.user.id)
+    expect(store.ensureIndexJobs).toHaveBeenNthCalledWith(2, registered.user.id)
   })
 })
 

@@ -5,6 +5,8 @@ export function createMemoryStore() {
   const notes = new Map()
 
   return {
+    storageMode: 'memory',
+
     async healthCheck() {
       return true
     },
@@ -87,6 +89,10 @@ export function createMemoryStore() {
 
     async retryFailedIndexJobs() {
       return 0
+    },
+
+    async retrieveKnowledgeCandidates() {
+      return { dense: [], keyword: [] }
     },
 
     async claimNextIndexJob() {

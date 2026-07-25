@@ -26,14 +26,18 @@ export function getEmbeddingConfig() {
   }
 }
 
-export function getAICapabilities() {
+export function getAICapabilities({
+  storageMode = process.env.DATABASE_URL?.trim() ? 'postgres' : 'memory',
+} = {}) {
   const config = getPlatformAIConfig()
   const embeddingConfig = getEmbeddingConfig()
+  const embeddingConfigured = Boolean(embeddingConfig.apiKey)
   return {
     chatConfigured: Boolean(config.apiKey),
     visionConfigured: Boolean(config.visionApiKey || config.apiKey),
     transcriptionConfigured: Boolean(config.transcriptionApiKey || config.apiKey),
-    embeddingConfigured: Boolean(embeddingConfig.apiKey),
+    embeddingConfigured,
+    retrievalMode: storageMode === 'postgres' ? (embeddingConfigured ? 'hybrid' : 'keyword') : 'basic',
     model: config.model,
     visionModel: config.visionModel,
     transcriptionModel: config.transcriptionModel,
