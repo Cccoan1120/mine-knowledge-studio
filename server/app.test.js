@@ -354,6 +354,8 @@ describe('RAG question and index APIs', () => {
       { question: 'Valid question?', scope: { tags: ['same', 'same'] } },
       { question: 'Valid question?', scope: { noteIds: Array.from({ length: 21 }, (_, index) => `note-${index}`) } },
       { question: 'Valid question?', scope: { topics: ['x'.repeat(101)] } },
+      { question: 'Valid question?', noteIds: [42] },
+      { question: 'Valid question?', noteIds: ['same', 'same'] },
     ]
 
     for (const body of invalidBodies) {
@@ -470,6 +472,35 @@ describe('RAG question and index APIs', () => {
     expect(store.ensureIndexJobs).toHaveBeenCalledTimes(2)
     expect(store.ensureIndexJobs).toHaveBeenNthCalledWith(1, registered.user.id)
     expect(store.ensureIndexJobs).toHaveBeenNthCalledWith(2, registered.user.id)
+  })
+
+  it('keeps auth responses successful and logs only a fixed message when index ensuring fails', async () => {
+    const store = createMemoryStore()
+    store.ensureIndexJobs = vi.fn()
+      .mockRejectedValueOnce(new Error('async raw secret'))
+      .mockImplementationOnce(() => {
+        throw new Error('sync raw secret')
+      })
+    const logger = { error: vi.fn() }
+    const apiUrl = await serveApp({ store, logger })
+
+    const registered = await registerSession(apiUrl, 'index-failure@example.com')
+    await new Promise(setImmediate)
+    expect(registered.user.email).toBe('index-failure@example.com')
+
+    const loginResponse = await fetch(`${apiUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'index-failure@example.com', password: 'secret123' }),
+    })
+    await new Promise(setImmediate)
+
+    expect(loginResponse.ok).toBe(true)
+    expect(logger.error.mock.calls).toEqual([
+      ['Knowledge indexing ensure failed.'],
+      ['Knowledge indexing ensure failed.'],
+    ])
+    expect(JSON.stringify(logger.error.mock.calls)).not.toContain('raw secret')
   })
 })
 

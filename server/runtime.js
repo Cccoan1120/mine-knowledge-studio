@@ -32,6 +32,7 @@ export function startRuntime({
   }
 
   const handleSignal = () => {
+    stopWorker()
     server.close()
   }
   const stopWorker = () => {

@@ -42,7 +42,9 @@ export function validateAskRequest(value) {
   const scopeInput = rawScope || {}
   const noteIds = Object.prototype.hasOwnProperty.call(scopeInput, 'noteIds')
     ? uniqueStringArray(scopeInput.noteIds, 20, 100, 'Scope note IDs')
-    : validateNoteIds(input.noteIds)
+    : Object.prototype.hasOwnProperty.call(input, 'noteIds')
+      ? uniqueStringArray(input.noteIds, 20, 128, 'Legacy note IDs')
+      : []
 
   return {
     question: validateQuestion(input.question),

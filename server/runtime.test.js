@@ -4,14 +4,16 @@ import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 import { startRuntime } from './runtime.js'
 
-function fakeServer() {
+function fakeServer({ closeImmediately = true } = {}) {
   const server = new EventEmitter()
-  server.close = vi.fn(() => server.emit('close'))
+  server.close = vi.fn(() => {
+    if (closeImmediately) server.emit('close')
+  })
   return server
 }
 
-function runtimeHarness({ storageMode, embeddingConfigured }) {
-  const server = fakeServer()
+function runtimeHarness({ storageMode, embeddingConfigured, closeImmediately = true }) {
+  const server = fakeServer({ closeImmediately })
   const app = { listen: vi.fn((_port, _host, callback) => {
     callback()
     return server
@@ -62,6 +64,22 @@ describe('server runtime indexing worker lifecycle', () => {
     harness.processRef.emit('SIGTERM')
 
     expect(harness.server.close).toHaveBeenCalledOnce()
+    expect(harness.worker.stop).toHaveBeenCalledOnce()
+  })
+
+  it.each(['SIGINT', 'SIGTERM'])('stops the worker immediately on %s before server close completes', (signal) => {
+    const harness = runtimeHarness({
+      storageMode: 'postgres',
+      embeddingConfigured: true,
+      closeImmediately: false,
+    })
+
+    harness.processRef.emit(signal)
+
+    expect(harness.server.close).toHaveBeenCalledOnce()
+    expect(harness.worker.stop).toHaveBeenCalledOnce()
+
+    harness.server.emit('close')
     expect(harness.worker.stop).toHaveBeenCalledOnce()
   })
 })

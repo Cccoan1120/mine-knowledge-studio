@@ -110,3 +110,74 @@ No whitespace errors. Git emitted only the repository's Windows LF-to-CRLF notic
 ## Concern
 
 The Prisma retrieval SQL is unit-tested through captured query text and bound parameters, but it has not been executed against a live PostgreSQL/pgvector database. That integration gap is explicitly reserved for Task 5.
+
+## Review Fix Round 1
+
+### RED
+
+Command:
+
+```text
+pnpm vitest run server/app.test.js server/runtime.test.js
+```
+
+Result before the fixes:
+
+```text
+Exit code: 1
+Test Files  2 failed (2)
+Tests       3 failed | 25 passed (28)
+Duration    15.93s
+```
+
+The three intended failures were:
+
+- legacy `{ noteIds: [42] }` returned HTTP 200 instead of HTTP 400;
+- `SIGINT` did not stop the worker until the delayed server `close` event;
+- `SIGTERM` did not stop the worker until the delayed server `close` event.
+
+The added auth ensure-failure coverage passed in this RED run. It verified that an asynchronous rejection after register and a synchronous throw after login did not delay either response, and that both paths logged only the fixed safe message.
+
+### GREEN
+
+Command:
+
+```text
+pnpm vitest run server/app.test.js server/runtime.test.js
+```
+
+Result after the minimal fixes:
+
+```text
+Exit code: 0
+Test Files  2 passed (2)
+Tests       28 passed (28)
+Duration    15.79s
+```
+
+Fixes:
+
+- Legacy ask `noteIds` now use string-only, unique-array validation with the existing 20-item limit and legacy 128-character value limit.
+- Normal termination signals stop the worker before calling `server.close`; the existing close handler remains idempotent cleanup.
+- Register/login index ensuring retains the existing non-blocking fixed-message error handling, now covered for asynchronous rejection and synchronous throw.
+
+### Verification
+
+```text
+pnpm test
+Exit code: 0
+Test Files  22 passed (22)
+Tests       116 passed (116)
+
+pnpm lint
+Exit code: 0
+Output: $ oxlint
+
+pnpm build
+Exit code: 0
+TypeScript and Vite production builds succeeded.
+
+git diff --check
+Exit code: 0
+No whitespace errors; only the repository's Windows LF-to-CRLF notices were emitted.
+```
