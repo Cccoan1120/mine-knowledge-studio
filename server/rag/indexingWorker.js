@@ -9,6 +9,7 @@ export function createIndexingWorker({
   embeddingClient,
   logger = console,
   now = () => new Date(),
+  clock = () => Date.now(),
   pollIntervalMs = 1_000,
   setTimeoutFn = setTimeout,
   clearTimeoutFn = clearTimeout,
@@ -17,6 +18,7 @@ export function createIndexingWorker({
   let timer = null
 
   async function runOnce() {
+    const startedAt = clock()
     const job = await store.claimNextIndexJob()
     if (!job) return { status: 'idle' }
 
@@ -37,18 +39,43 @@ export function createIndexingWorker({
       }))
 
       const replaced = await store.replaceIndexChunks(job, chunks)
-      return { status: replaced ? 'ready' : 'stale', jobId: job.id }
+      const status = replaced ? 'ready' : 'stale'
+      emitMetric(logger, {
+        event: 'knowledge_index_job',
+        outcome: status,
+        jobCount: 1,
+        durationMs: elapsedMs(clock, startedAt),
+        failureCategory: null,
+      })
+      return { status, jobId: job.id }
     } catch {
       const retryDelay = RETRY_DELAYS_MS[job.attempts - 1]
       const retryAt = retryDelay === undefined ? null : new Date(now().getTime() + retryDelay)
       const recorded = await store.recordIndexJobFailure(job, { retryAt })
-      if (!recorded) return { status: 'stale', jobId: job.id }
+      if (!recorded) {
+        emitMetric(logger, {
+          event: 'knowledge_index_job',
+          outcome: 'stale',
+          jobCount: 1,
+          durationMs: elapsedMs(clock, startedAt),
+          failureCategory: null,
+        })
+        return { status: 'stale', jobId: job.id }
+      }
       logger.error('Knowledge indexing failed.', {
         jobId: job.id,
         attempt: job.attempts,
         retryScheduled: Boolean(retryAt),
       })
-      return { status: retryAt ? 'rescheduled' : 'failed', jobId: job.id }
+      const status = retryAt ? 'rescheduled' : 'failed'
+      emitMetric(logger, {
+        event: 'knowledge_index_job',
+        outcome: status,
+        jobCount: 1,
+        durationMs: elapsedMs(clock, startedAt),
+        failureCategory: 'indexing_failed',
+      })
+      return { status, jobId: job.id }
     }
   }
 
@@ -77,4 +104,12 @@ export function createIndexingWorker({
       timer = null
     },
   }
+}
+
+function emitMetric(logger, payload) {
+  logger.log?.('Mine operational metric.', payload)
+}
+
+function elapsedMs(clock, startedAt) {
+  return Math.max(0, clock() - startedAt)
 }

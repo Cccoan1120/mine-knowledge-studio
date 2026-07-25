@@ -9,38 +9,96 @@ export function createRagQuestionService({
   embeddingClient,
   chatClient,
   legacyAnswer = answerQuestion,
+  logger,
+  clock = () => Date.now(),
 }) {
   return {
     async ask({ userId, question, history = [], scope }) {
       if (store.storageMode !== 'postgres') {
-        return answerBasic({ store, legacyAnswer, userId, question, scope })
+        return answerBasic({ store, legacyAnswer, logger, clock, userId, question, scope })
       }
 
+      const retrievalStartedAt = clock()
       const standaloneQuestion = await rewriteQuestion({ chatClient, question, history })
       const searchTokens = buildSearchTokens(standaloneQuestion)
       const queryEmbedding = await embedQuery(embeddingClient, standaloneQuestion)
-      const { dense, keyword } = await store.retrieveKnowledgeCandidates({
-        userId,
-        searchTokens,
-        queryEmbedding,
-        scope,
-        denseLimit: 30,
-        keywordLimit: 30,
-      })
+      let dense
+      let keyword
+      try {
+        ({ dense, keyword } = await store.retrieveKnowledgeCandidates({
+          userId,
+          searchTokens,
+          queryEmbedding,
+          scope,
+          denseLimit: 30,
+          keywordLimit: 30,
+        }))
+      } catch (error) {
+        emitMetric(logger, {
+          event: 'knowledge_retrieval',
+          outcome: 'failed',
+          durationMs: elapsedMs(clock, retrievalStartedAt),
+          retrievalMode: queryEmbedding && searchTokens ? 'hybrid' : 'keyword',
+          denseCandidateCount: 0,
+          keywordCandidateCount: 0,
+          contextCount: 0,
+          failureCategory: 'retrieval_failed',
+        })
+        throw error
+      }
       const selected = selectContext(fuseRankings(dense, keyword))
       const retrievalMode = queryEmbedding && searchTokens ? 'hybrid' : 'keyword'
+      emitMetric(logger, {
+        event: 'knowledge_retrieval',
+        outcome: 'success',
+        durationMs: elapsedMs(clock, retrievalStartedAt),
+        retrievalMode,
+        denseCandidateCount: dense.length,
+        keywordCandidateCount: keyword.length,
+        contextCount: selected.length,
+        failureCategory: null,
+      })
 
       if (!selected.length || !chatClient) {
-        return fallbackResult({ selected, retrievalMode, scope })
+        const answerStartedAt = clock()
+        const result = fallbackResult({ selected, retrievalMode, scope })
+        emitMetric(logger, {
+          event: 'answer_generation',
+          outcome: 'fallback',
+          durationMs: elapsedMs(clock, answerStartedAt),
+          retrievalMode,
+          contextCount: selected.length,
+          failureCategory: null,
+        })
+        return result
       }
 
+      const answerStartedAt = clock()
       let modelOutput
       try {
         modelOutput = await chatClient.completeJSON(answerMessages(question, history, selected))
       } catch {
-        return fallbackResult({ selected, retrievalMode, scope })
+        const result = fallbackResult({ selected, retrievalMode, scope })
+        emitMetric(logger, {
+          event: 'answer_generation',
+          outcome: 'fallback',
+          durationMs: elapsedMs(clock, answerStartedAt),
+          retrievalMode,
+          contextCount: selected.length,
+          failureCategory: 'answer_generation_failed',
+        })
+        return result
       }
-      return modelResult({ modelOutput, selected, retrievalMode, scope })
+      const result = modelResult({ modelOutput, selected, retrievalMode, scope })
+      emitMetric(logger, {
+        event: 'answer_generation',
+        outcome: 'model',
+        durationMs: elapsedMs(clock, answerStartedAt),
+        retrievalMode,
+        contextCount: selected.length,
+        failureCategory: null,
+      })
+      return result
     },
   }
 }
@@ -81,11 +139,23 @@ export function createPlatformChatClient({ config, fetchImpl = fetch }) {
   }
 }
 
-async function answerBasic({ store, legacyAnswer, userId, question, scope }) {
+async function answerBasic({ store, legacyAnswer, logger, clock, userId, question, scope }) {
+  const retrievalStartedAt = clock()
   const notes = (await store.listNotes(userId)).filter((note) => noteMatchesScope(note, scope))
+  emitMetric(logger, {
+    event: 'knowledge_retrieval',
+    outcome: 'success',
+    durationMs: elapsedMs(clock, retrievalStartedAt),
+    retrievalMode: 'basic',
+    denseCandidateCount: 0,
+    keywordCandidateCount: notes.length,
+    contextCount: notes.length,
+    failureCategory: null,
+  })
+  const answerStartedAt = clock()
   const result = await legacyAnswer(question, notes)
   const knowledgeAnswer = String(result.answer || '')
-  return {
+  const answer = {
     knowledgeAnswer,
     generalSupplement: '',
     answer: knowledgeAnswer,
@@ -96,6 +166,15 @@ async function answerBasic({ store, legacyAnswer, userId, question, scope }) {
     retrievalMode: 'basic',
     scope,
   }
+  emitMetric(logger, {
+    event: 'answer_generation',
+    outcome: answer.mode,
+    durationMs: elapsedMs(clock, answerStartedAt),
+    retrievalMode: 'basic',
+    contextCount: notes.length,
+    failureCategory: null,
+  })
+  return answer
 }
 
 function noteMatchesScope(note, scope) {
@@ -245,4 +324,12 @@ function trustedCitation(chunk, quote) {
 
 function unique(values) {
   return [...new Set(values)]
+}
+
+function emitMetric(logger, payload) {
+  logger?.log?.('Mine operational metric.', payload)
+}
+
+function elapsedMs(clock, startedAt) {
+  return Math.max(0, clock() - startedAt)
 }

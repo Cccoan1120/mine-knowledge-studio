@@ -26,6 +26,39 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+  database-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.1-pg17
+        env:
+          POSTGRES_DB: mine_ci
+          POSTGRES_USER: mine_ci
+          POSTGRES_PASSWORD: mine_ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mine_ci -d mine_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://mine_ci:mine_ci_password@127.0.0.1:5432/mine_ci
+      MINE_RUN_DB_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.34.5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm db:deploy
+      - run: pnpm test:db
+
   docker:
     runs-on: ubuntu-latest
     needs: quality

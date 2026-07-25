@@ -142,6 +142,61 @@ describe('indexing worker', () => {
     }
   })
 
+  it('records safe indexing outcome metrics with duration and fixed failure categories', async () => {
+    const secretSentinels = [
+      'question sentinel',
+      'source sentinel',
+      'quote sentinel',
+      'embedding-secret',
+      'postgresql://secret',
+    ]
+    const successLogger = { log: vi.fn(), error: vi.fn() }
+    const successTimes = [1_000, 1_025]
+    const successWorker = createIndexingWorker({
+      store: fakeStore({ content: `source sentinel ${secretSentinels[2]}` }),
+      embeddingClient: { embed: vi.fn(async () => [[0.5]]) },
+      logger: successLogger,
+      clock: () => successTimes.shift(),
+      now: () => now,
+    })
+
+    await expect(successWorker.runOnce()).resolves.toMatchObject({ status: 'ready' })
+    expect(successLogger.log).toHaveBeenCalledWith('Mine operational metric.', {
+      event: 'knowledge_index_job',
+      outcome: 'ready',
+      jobCount: 1,
+      durationMs: 25,
+      failureCategory: null,
+    })
+
+    const failureLogger = { log: vi.fn(), error: vi.fn() }
+    const failureTimes = [2_000, 2_040]
+    const failureWorker = createIndexingWorker({
+      store: fakeStore(),
+      embeddingClient: {
+        embed: vi.fn(async () => Promise.reject(new Error(secretSentinels.join(' ')))),
+      },
+      logger: failureLogger,
+      clock: () => failureTimes.shift(),
+      now: () => now,
+    })
+
+    await expect(failureWorker.runOnce()).resolves.toMatchObject({ status: 'rescheduled' })
+    expect(failureLogger.log).toHaveBeenCalledWith('Mine operational metric.', {
+      event: 'knowledge_index_job',
+      outcome: 'rescheduled',
+      jobCount: 1,
+      durationMs: 40,
+      failureCategory: 'indexing_failed',
+    })
+    const logs = JSON.stringify([
+      successLogger.log.mock.calls,
+      failureLogger.log.mock.calls,
+      failureLogger.error.mock.calls,
+    ])
+    for (const sentinel of secretSentinels) expect(logs).not.toContain(sentinel)
+  })
+
   it('starts and stops a non-overlapping polling loop', async () => {
     vi.useFakeTimers()
     const store = fakeStore({ job: null })

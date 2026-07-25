@@ -204,6 +204,64 @@ describe('RAG question service', () => {
     expect(result.generalSupplement).toBe('General background, clearly separated.')
   })
 
+  it('records safe retrieval and answer timing metrics without questions, sources, quotes, keys, or errors', async () => {
+    const evidence = chunk('chunk-1', 'note-1', {
+      content: 'source sentinel with quote sentinel',
+      source: 'postgresql://connection-sentinel',
+    })
+    const store = postgresStore({ dense: [evidence], keyword: [evidence] })
+    const logger = { log: vi.fn() }
+    const times = [1_000, 1_030, 2_000, 2_045]
+    const service = createRagQuestionService({
+      store,
+      embeddingClient: { embed: vi.fn(async () => [Array(1536).fill(0.1)]) },
+      chatClient: {
+        completeJSON: vi.fn(async () => Promise.reject(new Error('provider-error-sentinel api-key-sentinel'))),
+      },
+      logger,
+      clock: () => times.shift(),
+    })
+
+    await service.ask({
+      userId: 'user-1',
+      question: 'question sentinel',
+      history: [],
+      scope: { noteIds: [], topics: [], tags: [] },
+    })
+
+    expect(logger.log.mock.calls).toEqual([
+      ['Mine operational metric.', {
+        event: 'knowledge_retrieval',
+        outcome: 'success',
+        durationMs: 30,
+        retrievalMode: 'hybrid',
+        denseCandidateCount: 1,
+        keywordCandidateCount: 1,
+        contextCount: 1,
+        failureCategory: null,
+      }],
+      ['Mine operational metric.', {
+        event: 'answer_generation',
+        outcome: 'fallback',
+        durationMs: 45,
+        retrievalMode: 'hybrid',
+        contextCount: 1,
+        failureCategory: 'answer_generation_failed',
+      }],
+    ])
+    const logs = JSON.stringify(logger.log.mock.calls)
+    for (const sentinel of [
+      'question sentinel',
+      'source sentinel',
+      'quote sentinel',
+      'connection-sentinel',
+      'provider-error-sentinel',
+      'api-key-sentinel',
+    ]) {
+      expect(logs).not.toContain(sentinel)
+    }
+  })
+
   it('filters memory notes with AND-across and OR-within scope semantics', async () => {
     const store = createMemoryStore()
     const first = await store.createNote('user-1', {

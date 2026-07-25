@@ -52,6 +52,10 @@ pnpm db:migrate
 AI_API_KEY=your_key
 AI_BASE_URL=https://api.openai.com/v1
 AI_MODEL=gpt-4o-mini
+AI_EMBEDDING_API_KEY=
+AI_EMBEDDING_BASE_URL=
+AI_EMBEDDING_MODEL=text-embedding-3-small
+AI_EMBEDDING_DIMENSIONS=1536
 AI_VISION_API_KEY=
 AI_VISION_BASE_URL=https://api.openai.com/v1
 AI_VISION_MODEL=gpt-4o-mini
@@ -59,6 +63,16 @@ AI_TRANSCRIPTION_API_KEY=
 AI_TRANSCRIPTION_BASE_URL=https://api.openai.com/v1
 AI_TRANSCRIPTION_MODEL=gpt-4o-transcribe
 ```
+
+Embedding Key 和 Base URL 留空时会复用普通对话的 `AI_API_KEY` 和 `AI_BASE_URL`。向量维度固定为 `1536`，必须与数据库的 `vector(1536)` 列一致。
+
+素材问答有三种检索模式：
+
+- `hybrid`：Postgres 与 Embedding 均可用，同时融合向量和关键词结果。
+- `keyword`：使用 Postgres 中已就绪索引的关键词结果；关闭 Embedding 配置会无损回退到此模式。
+- `basic`：未配置 Postgres 时，使用内存中的整篇素材进行基础问答。
+
+旧素材会异步回填索引；回填期间，已经 ready 的内容仍然可以查询。关闭 Embedding 不会删除已有 chunks，适合作为回滚方式，但新增或修改素材需要恢复 Embedding 后才会继续建立索引。
 
 未配置 API Key 时，应用会使用 fallback，保证 Demo 闭环仍然可演示。
 
@@ -88,5 +102,8 @@ pnpm start
 ```bash
 pnpm lint
 pnpm test
+pnpm test:db
 pnpm build
 ```
+
+`pnpm test:db` 仅供确认过的临时 pgvector 数据库使用，并且还需要显式设置 `MINE_RUN_DB_TESTS=1`；没有 opt-in 时会安全跳过。

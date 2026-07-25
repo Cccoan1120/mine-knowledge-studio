@@ -29,7 +29,7 @@ export function createImportApp(options = {}) {
   })
   const store = options.store || createDefaultStore()
   const logger = options.logger || console
-  const questionService = options.questionService || createDefaultQuestionService(store)
+  const questionService = options.questionService || createDefaultQuestionService(store, logger)
 
   app.set('trust proxy', 1)
   app.disable('x-powered-by')
@@ -207,13 +207,14 @@ export function createImportApp(options = {}) {
   return app
 }
 
-function createDefaultQuestionService(store) {
+function createDefaultQuestionService(store, logger) {
   const chatConfig = getPlatformAIConfig()
   const embeddingConfig = getEmbeddingConfig()
   return createRagQuestionService({
     store,
     embeddingClient: embeddingConfig.apiKey ? createEmbeddingClient({ config: embeddingConfig }) : undefined,
     chatClient: chatConfig.apiKey ? createPlatformChatClient({ config: chatConfig }) : undefined,
+    logger,
   })
 }
 
