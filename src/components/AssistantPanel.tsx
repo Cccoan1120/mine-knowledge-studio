@@ -178,9 +178,9 @@ export function AssistantPanel({
           <div className="ask-status">
             <span className={`result-mode result-mode-${actualRetrievalMode}`}>{retrievalModeLabel(actualRetrievalMode)}</span>
             {indexStatus ? <span>索引覆盖 {indexStatus.ready}/{indexStatus.total}</span> : null}
-            {indexStatus && (indexStatus.pending || indexStatus.processing || indexStatus.missing) ? (
-              <span>待处理 {indexStatus.pending + indexStatus.processing + indexStatus.missing}</span>
-            ) : null}
+            {indexStatus?.pending ? <span>待处理 {indexStatus.pending}</span> : null}
+            {indexStatus?.processing ? <span>处理中 {indexStatus.processing}</span> : null}
+            {indexStatus?.missing ? <span>待补全 {indexStatus.missing}</span> : null}
             {indexStatus?.failed ? (
               <button type="button" onClick={onRetryIndex} disabled={busy === 'index-retry'}>重试 {indexStatus.failed} 项失败</button>
             ) : null}
@@ -225,7 +225,7 @@ export function AssistantPanel({
             </details>
           ) : null}
           <div className="ask-actions">
-            <span>{scopeLabel(answer?.scope, askScopeMode, note)}</span>
+            <span>{scopeLabel(answer?.scope)}</span>
             <button type="button" onClick={onNewConversation} disabled={!conversationCount} aria-label="新建对话" title="新建对话">
               <RotateCcw size={15} />
             </button>
@@ -250,10 +250,14 @@ export function AssistantPanel({
                   </button>
                 ))}
               </div>
+              {answer.insufficient ? (
+                <p className="evidence-warning">
+                  个人知识库中的证据不足。{answer.generalSupplement ? '以下模型补充不由素材引用支持。' : ''}
+                </p>
+              ) : null}
               {answer.insufficient && answer.generalSupplement ? (
                 <div className="answer-supplement">
                   <p className="section-kicker">模型补充</p>
-                  <p>个人知识库中的证据不足，以下模型补充不由素材引用支持。</p>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer.generalSupplement}</ReactMarkdown>
                 </div>
               ) : null}
@@ -306,10 +310,10 @@ function retrievalModeLabel(mode: RetrievalMode) {
   return mode === 'hybrid' ? 'Hybrid RAG' : mode === 'keyword' ? 'Keyword retrieval' : 'Basic retrieval'
 }
 
-function scopeLabel(scope: AnswerResult['scope'], mode: AskScopeMode, note?: Note) {
+function scopeLabel(scope: AnswerResult['scope']) {
+  if (!scope) return '已选择范围'
   if (scope?.noteIds?.length) return `实际范围：${scope.noteIds.length} 条素材`
   if (scope?.topics?.length) return `实际范围：${scope.topics.join('、')}`
   if (scope?.tags?.length) return `实际范围：${scope.tags.join('、')}`
-  if (mode === 'current' && note) return `实际范围：${note.title}`
   return '实际范围：整个素材库'
 }

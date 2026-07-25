@@ -94,7 +94,7 @@ function App() {
   const [aiCapabilities, setAiCapabilities] = useState<PlatformAICapabilities | null>(null)
   const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null)
   const [libraryLoaded, setLibraryLoaded] = useState(false)
-  const [indexRefreshToken, setIndexRefreshToken] = useState(0)
+  const [indexPollingCycle, setIndexPollingCycle] = useState(0)
   const [showSettings, setShowSettings] = useState(false)
   const [showImportPanel, setShowImportPanel] = useState(false)
   const [localMigrationNotes, setLocalMigrationNotes] = useState<Note[]>([])
@@ -157,15 +157,19 @@ function App() {
       }
     }
 
-    void ensureIndex().then(poll).catch((error) => {
-      if (!disposed) setStatus(error instanceof Error ? error.message : '索引初始化暂时不可用。')
-    })
+    if (indexPollingCycle === 0) {
+      void ensureIndex().then(poll).catch((error) => {
+        if (!disposed) setStatus(error instanceof Error ? error.message : '索引初始化暂时不可用。')
+      })
+    } else {
+      timer = setTimeout(poll, 5000)
+    }
 
     return () => {
       disposed = true
       if (timer) clearTimeout(timer)
     }
-  }, [user, libraryLoaded, indexRefreshToken])
+  }, [user, libraryLoaded, indexPollingCycle])
 
   useEffect(() => localStorage.setItem(assistantWidthKey, String(assistantWidth)), [assistantWidth])
   useEffect(() => localStorage.setItem(assistantVisibleKey, String(showAssistant)), [showAssistant])
@@ -305,8 +309,13 @@ function App() {
     setSelectedId('')
     setAnswer(null)
     setConversation([])
+    setAskScopeMode('library')
+    setAskTopics([])
+    setAskTags([])
+    setAskSelectedSourceIds([])
     setIndexStatus(null)
     setLibraryLoaded(false)
+    setIndexPollingCycle(0)
     setStatus('已退出登录。')
   }
 
@@ -627,8 +636,9 @@ function App() {
   async function retryFailedIndex() {
     setBusy('index-retry')
     try {
-      setIndexStatus(await retryIndex())
-      setIndexRefreshToken((current) => current + 1)
+      const nextStatus = await retryIndex()
+      setIndexStatus(nextStatus)
+      if (nextStatus.pending || nextStatus.processing || nextStatus.missing) setIndexPollingCycle((current) => current + 1)
     } catch (error) {
       setStatus(error instanceof Error ? error.message : '索引重试失败。')
     } finally {
