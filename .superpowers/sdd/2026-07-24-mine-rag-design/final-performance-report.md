@@ -128,3 +128,55 @@ boundary, but the query was not executed or performance-profiled against live
 PostgreSQL. Live syntax, query-plan, index usage, and latency still require the
 guarded disposable PostgreSQL/pgvector CI service. The safe local DB result is
 an explicit skip, not a pass.
+
+## Scoped whitespace follow-up
+
+The scoped re-review found that PostgreSQL's default `BTRIM(content)` removes
+ordinary spaces but does not match JavaScript `trim()` for newline-only,
+tab-only, and other whitespace-only notes. Such a ready note has no chunks, so
+status could report it as permanently missing even though `ensureIndexJobs`
+correctly treats it as empty.
+
+### Follow-up RED
+
+The SQL-boundary regression was added before changing production code:
+
+```text
+pnpm exec vitest run server/store/prismaStore.test.js
+```
+
+Observed exit code: `1`; `1` test failed and `20` passed. The emitted status
+SQL still contained default `BTRIM(note."content")` and did not contain the
+required newline/tab whitespace class or common ECMAScript trim whitespace
+code points.
+
+### Follow-up GREEN
+
+The empty-note predicate alone was changed to an anchored PostgreSQL Unicode
+regular expression. It uses `[[:space:]]` for newline, tab, carriage return,
+form feed, vertical tab, and ordinary space, plus the common ECMAScript Unicode
+trim set including NBSP, U+1680, U+2000-U+200A, U+2028/U+2029, U+202F, U+205F,
+U+3000, and BOM.
+
+The exact RED command then exited `0`: `1` file and `21/21` tests passed.
+
+The single aggregate query, user-ID predicates, category counts, control-plane
+limiter, heavy ensure audit, schema, and migration state are unchanged.
+
+### Follow-up final verification
+
+- Affected focused tests: `3` files and `53/53` tests passed.
+- Full `pnpm test`: `25` files passed and `1` skipped; `162` tests passed and
+  `5` skipped.
+- `pnpm lint`: exit `0`, no findings.
+- `pnpm build`: exit `0`.
+- Safe `pnpm test:db` with `MINE_RUN_DB_TESTS` and `DATABASE_URL` removed:
+  exit `0`; `1` file and all `5` live tests explicitly skipped at `0ms`.
+- Local fixture check:
+  `fixture verified: 30 notes, 20 questions, 20/20 independent-text top-five`.
+- `git diff --check`: exit `0`; only Windows line-ending conversion warnings
+  were printed.
+
+The main workspace `.env.local` was not read, and no database connection was
+attempted. Live PostgreSQL execution and query-plan verification remain the
+only concern.

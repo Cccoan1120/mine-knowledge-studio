@@ -272,6 +272,36 @@ describe('Prisma indexing store', () => {
     expect(parameters).toEqual(['user-1'])
   })
 
+  it('treats newline, tab, and common ECMAScript trim whitespace as empty in status SQL', async () => {
+    const prisma = {
+      $queryRawUnsafe: vi.fn(async () => [{
+        total: 1,
+        pending: 0,
+        processing: 0,
+        ready: 1,
+        failed: 0,
+        missing: 0,
+      }]),
+    }
+    const store = createPrismaStore({ prisma })
+
+    await expect(store.getIndexStatus('user-1')).resolves.toEqual({
+      mode: 'hybrid',
+      total: 1,
+      pending: 0,
+      processing: 0,
+      ready: 1,
+      failed: 0,
+      missing: 0,
+    })
+    const [query] = prisma.$queryRawUnsafe.mock.calls[0]
+    expect(query).toContain(`note."content" ~ U&'^[[:space:]`)
+    expect(query).toContain('\\00A0')
+    expect(query).toContain('\\2000-\\200A')
+    expect(query).toContain('\\2028\\2029')
+    expect(query).toContain('\\FEFF')
+  })
+
   it('resets only the requested user failed jobs', async () => {
     const prisma = {
       knowledgeIndexJob: {

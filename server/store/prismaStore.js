@@ -181,7 +181,7 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
               note."id",
               job."status",
               CASE
-                WHEN BTRIM(note."content") = '' THEN job."status" = 'ready'
+                WHEN note."content" ~ U&'^[[:space:]\\00A0\\1680\\2000-\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF]*$' THEN job."status" = 'ready'
                 WHEN job."status" = 'ready' THEN EXISTS (
                   SELECT 1
                   FROM "KnowledgeChunk" AS chunk
