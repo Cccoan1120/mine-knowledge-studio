@@ -179,6 +179,29 @@ describe('AI service proxy', () => {
     expect(result.scope).toEqual({ topics: ['内容创作'] })
   })
 
+  it('applies all local fallback scope filters with AND semantics', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new Error('offline'))))
+    const matching = {
+      ...demoNotes[0],
+      id: 'matching',
+      topic: 'Research',
+      tags: ['trusted'],
+      title: 'Aurora evidence',
+      content: 'Aurora evidence',
+    }
+    const wrongTopic = { ...matching, id: 'wrong-topic', topic: 'Archive' }
+    const wrongTag = { ...matching, id: 'wrong-tag', tags: ['other'] }
+
+    const result = await answerQuestion(
+      'Aurora evidence',
+      [matching, wrongTopic, wrongTag],
+      [],
+      { noteIds: ['matching', 'wrong-topic', 'wrong-tag'], topics: ['Research'], tags: ['trusted'] },
+    )
+
+    expect(result.sourceIds).toEqual(['matching'])
+  })
+
   it('generates markdown output from selected notes', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new Error('offline'))))
 

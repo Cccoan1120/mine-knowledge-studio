@@ -179,10 +179,12 @@ function mockAnswerQuestion(question: string, notes: Note[], scope?: AskScope): 
 
 function notesForScope(notes: Note[], scope?: AskScope) {
   if (!scope) return notes
-  if (scope.noteIds?.length) return notes.filter((note) => scope.noteIds?.includes(note.id))
-  if (scope.topics?.length) return notes.filter((note) => scope.topics?.includes(note.topic))
-  if (scope.tags?.length) return notes.filter((note) => note.tags.some((tag) => scope.tags?.includes(tag)))
-  return notes
+  return notes.filter((note) => {
+    if (scope.noteIds?.length && !scope.noteIds.includes(note.id)) return false
+    if (scope.topics?.length && !scope.topics.includes(note.topic)) return false
+    if (scope.tags?.length && !scope.tags.some((tag) => note.tags.includes(tag))) return false
+    return true
+  })
 }
 
 function mockGenerateOutput(type: OutputType, notes: Note[]): GeneratedResult {

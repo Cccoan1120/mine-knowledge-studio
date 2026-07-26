@@ -81,9 +81,9 @@ export function createMemoryStore() {
         total,
         pending: 0,
         processing: 0,
-        ready: 0,
+        ready: total,
         failed: 0,
-        missing: total,
+        missing: 0,
       }
     },
 

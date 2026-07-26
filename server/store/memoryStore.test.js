@@ -14,9 +14,9 @@ describe('memory store indexing contract', () => {
       total: 1,
       pending: 0,
       processing: 0,
-      ready: 0,
+      ready: 1,
       failed: 0,
-      missing: 1,
+      missing: 0,
     })
     expect(await store.ensureIndexJobs(user.id)).toEqual({ mode: 'basic', queued: 0 })
     expect(await store.retryFailedIndexJobs(user.id)).toBe(0)

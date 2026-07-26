@@ -146,23 +146,38 @@ function App() {
 
     let disposed = false
     let timer: ReturnType<typeof setTimeout> | undefined
+    let failures = 0
     const poll = async () => {
       try {
         const nextStatus = await getIndexStatus()
         if (disposed) return
+        failures = 0
         setIndexStatus(nextStatus)
-        if (nextStatus.pending || nextStatus.processing || nextStatus.missing) timer = setTimeout(poll, 5000)
+        if (
+          nextStatus.mode !== 'basic'
+          && (nextStatus.pending || nextStatus.processing || nextStatus.missing)
+        ) {
+          timer = setTimeout(poll, 5000)
+        }
       } catch (error) {
-        if (!disposed) setStatus(error instanceof Error ? error.message : '索引状态暂时不可用。')
+        if (!disposed) {
+          setStatus(error instanceof Error ? error.message : '索引状态暂时不可用。')
+          const retryDelay = Math.min(5000 * (2 ** failures), 30_000)
+          failures += 1
+          timer = setTimeout(poll, retryDelay)
+        }
       }
     }
 
     if (indexPollingCycle === 0) {
       void ensureIndex().then(poll).catch((error) => {
-        if (!disposed) setStatus(error instanceof Error ? error.message : '索引初始化暂时不可用。')
+        if (!disposed) {
+          setStatus(error instanceof Error ? error.message : '索引初始化暂时不可用。')
+          timer = setTimeout(poll, 5000)
+        }
       })
     } else {
-      timer = setTimeout(poll, 5000)
+      void poll()
     }
 
     return () => {
@@ -195,7 +210,9 @@ function App() {
     setNotes((current) =>
       current.map((note) => (note.id === selectedNote.id ? { ...note, content: editorMarkdown, updatedAt } : note)),
     )
-    void updateCloudNote(selectedNote.id, { content: editorMarkdown, updatedAt }).catch(() => setStatus('云端保存失败，请稍后重试。'))
+    void updateCloudNote(selectedNote.id, { content: editorMarkdown, updatedAt })
+      .then(restartIndexStatusRefresh)
+      .catch(() => setStatus('云端保存失败，请稍后重试。'))
   }, [selectedNote, editorMarkdown])
 
   if (authLoading) {
@@ -309,6 +326,7 @@ function App() {
     setSelectedId('')
     setAnswer(null)
     setConversation([])
+    setQuestion('')
     setAskScopeMode('library')
     setAskTopics([])
     setAskTags([])
@@ -329,6 +347,7 @@ function App() {
       const cloudNotes = [...imported, ...notes]
       setNotes(cloudNotes)
       setSelectedId(imported[0]?.id ?? cloudNotes[0]?.id ?? '')
+      restartIndexStatusRefresh()
       setStatus(`已迁移 ${imported.length} 条本地素材到当前账号。`)
     } catch {
       setStatus('本地素材迁移失败，请稍后重试。')
@@ -379,6 +398,7 @@ function App() {
 
     try {
       await updateCloudNote(noteId, patch)
+      if (Object.prototype.hasOwnProperty.call(patch, 'content')) restartIndexStatusRefresh()
       if (saveVersionRef.current !== version) return
       setSaveState('saved')
       setLastSavedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
@@ -430,6 +450,7 @@ function App() {
 
     setNotes((current) => [note, ...current])
     setSelectedId(note.id)
+    restartIndexStatusRefresh()
     setStatus('已创建新素材。')
   }
 
@@ -439,6 +460,7 @@ function App() {
     const nextNotes = notes.filter((note) => note.id !== selectedNote.id)
     setNotes(nextNotes)
     setSelectedId(nextNotes[0]?.id ?? '')
+    restartIndexStatusRefresh()
     setStatus(`已删除「${selectedNote.title}」。`)
   }
 
@@ -479,6 +501,7 @@ function App() {
     const cloudNotes = await bulkImportNotes(imported)
     setNotes((current) => [...cloudNotes, ...current])
     setSelectedId(cloudNotes[0].id)
+    restartIndexStatusRefresh()
     setStatus(`已导入 ${cloudNotes.length} 条 Markdown 素材。`)
   }
 
@@ -503,6 +526,7 @@ function App() {
       const cloudNotes = await bulkImportNotes(imported)
       setNotes((current) => [...cloudNotes, ...current])
       setSelectedId(cloudNotes[0].id)
+      restartIndexStatusRefresh()
     setStatus(`已打开本地库，并导入 ${cloudNotes.length} 条 Markdown 素材。`)
     } else {
       setStatus('已获得目录授权，但目录里暂时没有 Markdown 文件。')
@@ -631,6 +655,10 @@ function App() {
     setConversation([])
     setAnswer(null)
     setQuestion('')
+  }
+
+  function restartIndexStatusRefresh() {
+    setIndexPollingCycle((current) => current + 1)
   }
 
   async function retryFailedIndex() {
@@ -1080,6 +1108,7 @@ function App() {
     setNotes(nextNotes)
     setSelectedId(note.id)
     setShowImportPanel(false)
+    restartIndexStatusRefresh()
     setStatus(`已保存「${note.title}」到素材库。`)
 
     if (!analyzeAfterSave) return

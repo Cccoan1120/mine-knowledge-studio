@@ -4,6 +4,7 @@ import { hashContent } from '../rag/hash.js'
 import { normalizeNote, publicNote, publicUser } from './memoryStore.js'
 
 const require = createRequire(import.meta.url)
+const CURRENT_INDEX_VERSION = 1
 
 export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
 
@@ -116,20 +117,21 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
     },
 
     async ensureIndexJobs(userId) {
-      const [notes, jobs] = await Promise.all([
+      const [notes, jobs, chunks] = await Promise.all([
         prisma.note.findMany({
           where: { userId },
           select: { id: true, userId: true, content: true },
         }),
         prisma.knowledgeIndexJob.findMany({
           where: { userId },
-          select: { noteId: true, contentHash: true },
+          select: { noteId: true, contentHash: true, status: true },
+        }),
+        prisma.knowledgeChunk.findMany({
+          where: { userId },
+          select: { noteId: true, contentHash: true, indexVersion: true },
         }),
       ])
-      const jobHashes = new Map(jobs.map((job) => [job.noteId, job.contentHash]))
-      const stale = notes
-        .map((note) => ({ ...note, contentHash: hashContent(note.content) }))
-        .filter((note) => jobHashes.get(note.id) !== note.contentHash)
+      const stale = buildIndexStates(notes, jobs, chunks).filter(shouldQueueIndex)
 
       let queued = 0
       for (const candidate of stale) {
@@ -150,9 +152,14 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
           const currentHash = hashContent(currentNote.content)
           const currentJob = await transaction.knowledgeIndexJob.findUnique({
             where: { noteId: currentNote.id },
-            select: { contentHash: true },
+            select: { noteId: true, contentHash: true, status: true },
           })
-          if (currentJob?.contentHash === currentHash) return false
+          const currentChunks = await transaction.knowledgeChunk.findMany({
+            where: { noteId: currentNote.id, userId },
+            select: { noteId: true, contentHash: true, indexVersion: true },
+          })
+          const currentState = buildIndexStates([currentNote], currentJob ? [currentJob] : [], currentChunks)[0]
+          if (!shouldQueueIndex(currentState)) return false
 
           await upsertIndexJob(transaction, {
             userId,
@@ -167,24 +174,34 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
     },
 
     async getIndexStatus(userId) {
-      const [total, grouped] = await Promise.all([
-        prisma.note.count({ where: { userId } }),
-        prisma.knowledgeIndexJob.groupBy({
-          by: ['status'],
+      const [notes, jobs, chunks] = await Promise.all([
+        prisma.note.findMany({
           where: { userId },
-          _count: { _all: true },
+          select: { id: true, content: true },
+        }),
+        prisma.knowledgeIndexJob.findMany({
+          where: { userId },
+          select: { noteId: true, contentHash: true, status: true },
+        }),
+        prisma.knowledgeChunk.findMany({
+          where: { userId },
+          select: { noteId: true, contentHash: true, indexVersion: true },
         }),
       ])
-      const counts = Object.fromEntries(grouped.map((group) => [group.status, group._count._all]))
-      const indexed = Object.values(counts).reduce((sum, count) => sum + count, 0)
+      const counts = { pending: 0, processing: 0, ready: 0, failed: 0, missing: 0 }
+      for (const state of buildIndexStates(notes, jobs, chunks)) {
+        if (state.ready) {
+          counts.ready += 1
+        } else if (state.job?.contentHash === state.contentHash && state.job.status !== 'ready') {
+          counts[state.job.status] += 1
+        } else {
+          counts.missing += 1
+        }
+      }
       return {
         mode: 'hybrid',
-        total,
-        pending: counts.pending || 0,
-        processing: counts.processing || 0,
-        ready: counts.ready || 0,
-        failed: counts.failed || 0,
-        missing: Math.max(0, total - indexed),
+        total: notes.length,
+        ...counts,
       }
     },
 
@@ -240,10 +257,16 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
               chunk."endOffset",
               1 - (chunk."embedding" <=> $2::vector) AS "score"
             FROM "KnowledgeChunk" AS chunk
+            INNER JOIN "KnowledgeIndexJob" AS job
+              ON job."noteId" = chunk."noteId"
+              AND job."userId" = $1
+              AND job."status" = 'ready'
+              AND job."contentHash" = chunk."contentHash"
             INNER JOIN "Note" AS note
               ON note."id" = chunk."noteId"
               AND note."userId" = $1
             WHERE chunk."userId" = $1
+              AND chunk."indexVersion" = ${CURRENT_INDEX_VERSION}
               ${denseScope.sql}
             ORDER BY chunk."embedding" <=> $2::vector, chunk."id"
             LIMIT ${limitPlaceholder}::int
@@ -280,10 +303,16 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
                 to_tsquery('simple', $2)
               ) AS "score"
             FROM "KnowledgeChunk" AS chunk
+            INNER JOIN "KnowledgeIndexJob" AS job
+              ON job."noteId" = chunk."noteId"
+              AND job."userId" = $1
+              AND job."status" = 'ready'
+              AND job."contentHash" = chunk."contentHash"
             INNER JOIN "Note" AS note
               ON note."id" = chunk."noteId"
               AND note."userId" = $1
             WHERE chunk."userId" = $1
+              AND chunk."indexVersion" = ${CURRENT_INDEX_VERSION}
               AND to_tsvector('simple', chunk."searchTokens") @@ to_tsquery('simple', $2)
               ${keywordScope.sql}
             ORDER BY "score" DESC, chunk."id"
@@ -493,6 +522,41 @@ function upsertIndexJob(transaction, { userId, noteId, contentHash }) {
       lastError: null,
     },
   })
+}
+
+function buildIndexStates(notes, jobs, chunks) {
+  const jobsByNote = new Map(jobs.map((job) => [job.noteId, job]))
+  const chunksByNote = new Map()
+  for (const chunk of chunks) {
+    const noteChunks = chunksByNote.get(chunk.noteId) || []
+    noteChunks.push(chunk)
+    chunksByNote.set(chunk.noteId, noteChunks)
+  }
+
+  return notes.map((note) => {
+    const contentHash = hashContent(note.content)
+    const job = jobsByNote.get(note.id)
+    const noteChunks = chunksByNote.get(note.id) || []
+    const chunksCurrent = noteChunks.every(
+      (chunk) => chunk.contentHash === contentHash && chunk.indexVersion === CURRENT_INDEX_VERSION,
+    )
+    const hasRequiredChunks = !String(note.content).trim() || noteChunks.length > 0
+    return {
+      ...note,
+      contentHash,
+      job,
+      ready: job?.status === 'ready'
+        && job.contentHash === contentHash
+        && chunksCurrent
+        && hasRequiredChunks,
+    }
+  })
+}
+
+function shouldQueueIndex(state) {
+  if (state.ready) return false
+  if (!state.job || state.job.contentHash !== state.contentHash) return true
+  return state.job.status === 'ready'
 }
 
 function vectorLiteral(embedding) {

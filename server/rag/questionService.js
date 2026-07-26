@@ -41,7 +41,7 @@ export function createRagQuestionService({
           event: 'knowledge_retrieval',
           outcome: 'failed',
           durationMs: elapsedMs(clock, retrievalStartedAt),
-          retrievalMode: queryEmbedding && searchTokens ? 'hybrid' : 'keyword',
+          retrievalMode: retrievalModeFor(queryEmbedding, searchTokens),
           denseCandidateCount: 0,
           keywordCandidateCount: 0,
           contextCount: 0,
@@ -50,7 +50,7 @@ export function createRagQuestionService({
         throw error
       }
       const selected = selectContext(fuseRankings(dense, keyword))
-      const retrievalMode = queryEmbedding && searchTokens ? 'hybrid' : 'keyword'
+      const retrievalMode = retrievalModeFor(queryEmbedding, searchTokens)
       emitMetric(logger, {
         event: 'knowledge_retrieval',
         outcome: 'success',
@@ -271,8 +271,9 @@ function answerMessages(question, history, chunks) {
 
 function modelResult({ modelOutput, selected, retrievalMode, scope }) {
   const citations = validateChunkCitations(modelOutput?.citations, selected)
-  const insufficient = Boolean(modelOutput?.insufficient) || citations.length === 0
-  const knowledgeAnswer = String(modelOutput?.knowledgeAnswer || 'The selected knowledge is insufficient to answer.')
+  const modelKnowledgeAnswer = String(modelOutput?.knowledgeAnswer || '').trim()
+  const insufficient = Boolean(modelOutput?.insufficient) || citations.length === 0 || !modelKnowledgeAnswer
+  const knowledgeAnswer = modelKnowledgeAnswer || 'The selected knowledge is insufficient to answer.'
   return {
     knowledgeAnswer,
     generalSupplement: insufficient ? String(modelOutput?.generalSupplement || '') : '',
@@ -355,6 +356,11 @@ function trustedCitation(chunk, quote) {
 
 function unique(values) {
   return [...new Set(values)]
+}
+
+function retrievalModeFor(queryEmbedding, searchTokens) {
+  if (queryEmbedding) return searchTokens ? 'hybrid' : 'dense'
+  return 'keyword'
 }
 
 function emitMetric(logger, payload) {

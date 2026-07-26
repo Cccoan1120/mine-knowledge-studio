@@ -19,6 +19,7 @@ beforeEach(() => {
 afterEach(async () => {
   delete process.env.MINE_SKIP_YTDLP
   delete process.env.MINE_ALLOW_PRIVATE_IMPORTS
+  delete process.env.AI_EMBEDDING_ENABLED
   await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))))
   await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })))
   servers = []
@@ -445,7 +446,7 @@ describe('RAG question and index APIs', () => {
 
     expect(ensure).toEqual({
       queued: 0,
-      status: expect.objectContaining({ mode: 'basic', total: 1, missing: 1 }),
+      status: expect.objectContaining({ mode: 'basic', total: 1, missing: 0 }),
     })
     expect(ownerStatus.status.total).toBe(1)
     expect(otherStatus.status.total).toBe(0)
@@ -453,6 +454,55 @@ describe('RAG question and index APIs', () => {
       retried: 0,
       status: expect.objectContaining({ mode: 'basic', total: 1 }),
     })
+  })
+
+  it('does not spend the expensive AI quota on index status polling', async () => {
+    const questionService = {
+      ask: vi.fn(async () => ({
+        answer: 'answer',
+        knowledgeAnswer: 'answer',
+        generalSupplement: '',
+        sourceIds: [],
+        citations: [],
+        insufficient: true,
+        mode: 'fallback',
+        retrievalMode: 'basic',
+        scope: {},
+      })),
+    }
+    const apiUrl = await serveApp({ questionService })
+    const session = await registerSession(apiUrl, `index-poll-${Date.now()}@example.com`)
+
+    for (let attempt = 0; attempt < 31; attempt += 1) {
+      const response = await fetch(`${apiUrl}/api/ai/index/status`, {
+        headers: authHeaders(session.cookie),
+      })
+      expect(response.status).toBe(200)
+    }
+
+    const ask = await fetch(`${apiUrl}/api/ai/ask`, {
+      method: 'POST',
+      headers: authHeaders(session.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ question: 'Still available?' }),
+    })
+    expect(ask.status).toBe(200)
+    expect(questionService.ask).toHaveBeenCalledOnce()
+  })
+
+  it('reports keyword index status when embeddings are explicitly disabled', async () => {
+    process.env.AI_EMBEDDING_ENABLED = 'false'
+    const store = createMemoryStore()
+    store.storageMode = 'postgres'
+    const apiUrl = await serveApp({ store })
+    const session = await registerSession(apiUrl, 'keyword-status@example.com')
+
+    const response = await fetch(`${apiUrl}/api/ai/index/status`, {
+      headers: authHeaders(session.cookie),
+    })
+    const result = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(result.status.mode).toBe('keyword')
   })
 
   it('does not delay successful register or login while ensuring index jobs', async () => {

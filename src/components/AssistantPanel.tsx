@@ -307,7 +307,9 @@ export function AssistantPanel({
 }
 
 function retrievalModeLabel(mode: RetrievalMode) {
-  return mode === 'hybrid' ? 'Hybrid RAG' : mode === 'keyword' ? 'Keyword retrieval' : 'Basic retrieval'
+  if (mode === 'hybrid') return 'Hybrid RAG'
+  if (mode === 'dense') return 'Dense retrieval'
+  return mode === 'keyword' ? 'Keyword retrieval' : 'Basic retrieval'
 }
 
 function scopeLabel(scope: AnswerResult['scope']) {

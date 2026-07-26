@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildAskScope } from './utils/askScope'
@@ -56,6 +56,7 @@ const note: Note = {
 const user = { id: 'user-1', email: 'mine@example.com', createdAt: '', updatedAt: '' }
 const settledIndex = { mode: 'hybrid' as const, total: 1, ready: 1, pending: 0, processing: 0, missing: 0, failed: 0 }
 const failedIndex = { ...settledIndex, failed: 1 }
+const basicMissingIndex = { ...settledIndex, mode: 'basic' as const, ready: 0, missing: 1 }
 const answer = (text: string) => ({
   answer: text,
   knowledgeAnswer: text,
@@ -90,6 +91,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   document.body.innerHTML = ''
 })
 
@@ -98,6 +100,12 @@ async function openAsk() {
   await screen.findByDisplayValue('创作笔记')
   fireEvent.click(await screen.findByRole('button', { name: '问答' }, { timeout: 5000 }))
   return screen.findByPlaceholderText('针对素材库提一个问题')
+}
+
+async function flushEffects() {
+  await act(async () => {
+    for (let index = 0; index < 8; index += 1) await Promise.resolve()
+  })
 }
 
 describe('buildAskScope', () => {
@@ -116,6 +124,89 @@ describe('buildAskScope', () => {
   })
 })
 
+describe('index refresh lifecycle', () => {
+  it('does not keep polling missing coverage in basic mode', async () => {
+    vi.useFakeTimers()
+    serviceMocks.ensureIndex.mockResolvedValue(basicMissingIndex)
+    serviceMocks.getIndexStatus.mockResolvedValue(basicMissingIndex)
+
+    render(createElement(Root))
+    await flushEffects()
+    expect(serviceMocks.getIndexStatus).toHaveBeenCalledTimes(1)
+
+    await act(async () => vi.advanceTimersByTimeAsync(5000))
+    expect(serviceMocks.getIndexStatus).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
+  })
+
+  it('recovers a failed status request after a bounded delay', async () => {
+    vi.useFakeTimers()
+    serviceMocks.getIndexStatus
+      .mockRejectedValueOnce(new Error('temporary status failure'))
+      .mockResolvedValue(settledIndex)
+
+    render(createElement(Root))
+    await flushEffects()
+    expect(serviceMocks.getIndexStatus).toHaveBeenCalledTimes(1)
+
+    await act(async () => vi.advanceTimersByTimeAsync(4999))
+    expect(serviceMocks.getIndexStatus).toHaveBeenCalledTimes(1)
+    await act(async () => vi.advanceTimersByTimeAsync(1))
+    expect(serviceMocks.getIndexStatus).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+  })
+
+  it('refreshes immediately after create, import, and delete mutations', async () => {
+    const created = { ...note, id: 'created', title: 'Created', content: 'created content' }
+    const imported = { ...note, id: 'imported', title: 'Imported', content: 'imported content' }
+    serviceMocks.createNote.mockResolvedValue(created)
+    serviceMocks.bulkImportNotes.mockResolvedValue([imported])
+    serviceMocks.deleteNote.mockResolvedValue(undefined)
+    const { container } = render(createElement(Root))
+    await screen.findByDisplayValue(note.title)
+    await waitFor(() => expect(serviceMocks.getIndexStatus).toHaveBeenCalledTimes(1))
+
+    serviceMocks.getIndexStatus.mockClear()
+    fireEvent.click(container.querySelector('.nav-actions button') as HTMLButtonElement)
+    await waitFor(() => expect(serviceMocks.getIndexStatus).toHaveBeenCalledTimes(1))
+
+    serviceMocks.getIndexStatus.mockClear()
+    const file = new File(['# Imported\n\nimported content'], 'imported.md', { type: 'text/markdown' })
+    fireEvent.change(container.querySelector('.hidden-input') as HTMLInputElement, {
+      target: { files: [file] },
+    })
+    await waitFor(() => expect(serviceMocks.getIndexStatus).toHaveBeenCalledTimes(1))
+
+    serviceMocks.getIndexStatus.mockClear()
+    fireEvent.click(container.querySelector('.more-button') as HTMLButtonElement)
+    fireEvent.click(container.querySelector('.menu-danger') as HTMLButtonElement)
+    await waitFor(() => expect(serviceMocks.getIndexStatus).toHaveBeenCalledTimes(1))
+  })
+
+  it('refreshes after content edits but not metadata-only edits', async () => {
+    serviceMocks.updateNote.mockResolvedValue(note)
+    const { container } = render(createElement(Root))
+    await screen.findByDisplayValue(note.title)
+    await waitFor(() => expect(container.querySelector('.source-editor')).not.toBeNull())
+    await waitFor(() => expect(serviceMocks.getIndexStatus).toHaveBeenCalledTimes(1))
+
+    serviceMocks.getIndexStatus.mockClear()
+    fireEvent.change(container.querySelector('.title-input') as HTMLTextAreaElement, {
+      target: { value: 'Metadata only' },
+    })
+    await waitFor(() => expect(serviceMocks.updateNote).toHaveBeenCalled())
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(serviceMocks.getIndexStatus).not.toHaveBeenCalled()
+
+    serviceMocks.updateNote.mockClear()
+    fireEvent.change(container.querySelector('.source-editor') as HTMLTextAreaElement, {
+      target: { value: 'material content edit' },
+    })
+    await waitFor(() => expect(serviceMocks.updateNote).toHaveBeenCalled())
+    await waitFor(() => expect(serviceMocks.getIndexStatus).toHaveBeenCalledTimes(1))
+  })
+})
+
 describe('Ask session interactions', () => {
   it('retries failed index work without ensuring it again', async () => {
     serviceMocks.getIndexStatus.mockResolvedValue(failedIndex)
@@ -131,7 +222,8 @@ describe('Ask session interactions', () => {
   })
 
   it('resets Ask scope to the whole library after sign-out and sign-in', async () => {
-    await openAsk()
+    const question = await openAsk()
+    fireEvent.change(question, { target: { value: 'private unsent draft' } })
     fireEvent.change(screen.getByLabelText('问答范围'), { target: { value: 'manual' } })
     expect((screen.getByLabelText('问答范围') as HTMLSelectElement).value).toBe('manual')
 
@@ -145,6 +237,7 @@ describe('Ask session interactions', () => {
     fireEvent.click(screen.getByRole('button', { name: '问答' }))
 
     expect((screen.getByLabelText('问答范围') as HTMLSelectElement).value).toBe('library')
+    expect((screen.getByPlaceholderText('针对素材库提一个问题') as HTMLTextAreaElement).value).toBe('')
   })
 
   it('appends history only after success and clears it with New conversation', async () => {

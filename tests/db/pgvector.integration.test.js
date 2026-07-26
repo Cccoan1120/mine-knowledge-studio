@@ -14,6 +14,7 @@ import {
   evaluationQuestions,
   fixtureEmbedding,
 } from './fixtures/retrievalEvaluation.js'
+import { verifyDisposableDatabase } from './databaseGuard.js'
 
 const runDatabaseTests =
   process.env.MINE_RUN_DB_TESTS === '1' && Boolean(process.env.DATABASE_URL?.trim())
@@ -25,8 +26,11 @@ describeDatabase('live PostgreSQL and pgvector integration', () => {
   let prisma
   let trackedUserIds = []
 
-  beforeAll(() => {
-    prisma = createClient()
+  beforeAll(async () => {
+    prisma = await verifyDisposableDatabase({
+      databaseUrl: process.env.DATABASE_URL,
+      createClient,
+    })
   })
 
   afterEach(async () => {

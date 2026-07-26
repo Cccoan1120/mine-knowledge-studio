@@ -117,6 +117,25 @@ describe('RAG question service', () => {
     expect(store.retrieveKnowledgeCandidates.mock.calls[0][0].queryEmbedding).toBeUndefined()
   })
 
+  it('reports dense retrieval when only an embedding query is available', async () => {
+    const evidence = chunk('dense-1', 'note-1')
+    const store = postgresStore({ dense: [evidence], keyword: [] })
+    const service = createRagQuestionService({
+      store,
+      embeddingClient: { embed: vi.fn(async () => [Array(1536).fill(0.1)]) },
+    })
+
+    const result = await service.ask({
+      userId: 'user-1',
+      question: '!',
+      history: [],
+      scope: { noteIds: [], topics: [], tags: [] },
+    })
+
+    expect(result.retrievalMode).toBe('dense')
+    expect(result.citations).toEqual([expect.objectContaining({ chunkId: 'dense-1' })])
+  })
+
   it('rewrites a follow-up before retrieval and suppresses a supplement when evidence is sufficient', async () => {
     const evidence = chunk('chunk-1', 'note-1')
     const store = postgresStore({ dense: [evidence], keyword: [evidence] })
@@ -163,6 +182,32 @@ describe('RAG question service', () => {
     const answerMessages = chatClient.completeJSON.mock.calls[1][0]
     expect(answerMessages[0].content).toContain('untrusted data')
     expect(answerMessages[1].content).toContain('<UNTRUSTED_SOURCE_TEXT>')
+  })
+
+  it('marks a model answer insufficient when the model omits its knowledge answer', async () => {
+    const evidence = chunk('chunk-empty-answer', 'note-1')
+    const service = createRagQuestionService({
+      store: postgresStore({ dense: [evidence], keyword: [evidence] }),
+      embeddingClient: { embed: vi.fn(async () => [Array(1536).fill(0.2)]) },
+      chatClient: {
+        completeJSON: vi.fn(async () => ({
+          knowledgeAnswer: '   ',
+          citations: [{ chunkId: evidence.id, noteId: evidence.noteId, quote: evidence.content }],
+          insufficient: false,
+          generalSupplement: '',
+        })),
+      },
+    })
+
+    const result = await service.ask({
+      userId: 'user-1',
+      question: 'What does the evidence say?',
+      history: [],
+      scope: { noteIds: [], topics: [], tags: [] },
+    })
+
+    expect(result.insufficient).toBe(true)
+    expect(result.knowledgeAnswer).toBe('The selected knowledge is insufficient to answer.')
   })
 
   it('uses the approved fallback standalone query when rewriting fails', async () => {

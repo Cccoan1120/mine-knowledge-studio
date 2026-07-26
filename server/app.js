@@ -108,41 +108,41 @@ export function createImportApp(options = {}) {
     return response.json({ ok: true })
   })
 
-  app.use('/api/ai', requireAuth, aiRateLimit)
+  app.use('/api/ai', requireAuth)
 
   app.get('/api/ai/capabilities', (_request, response) => {
     response.json(getAICapabilities({ storageMode: store.storageMode }))
   })
 
-  app.post('/api/ai/analyze', async (request, response) => {
+  app.post('/api/ai/analyze', aiRateLimit, async (request, response) => {
     const notes = await store.listNotes(request.user.id)
     const note = notes.find((item) => item.id === request.body?.noteId) || request.body?.note
     if (!note) return response.status(404).json({ error: '素材不存在。' })
     response.json({ analysis: await analyzeNote(note, notes) })
   })
 
-  app.post('/api/ai/ask', async (request, response) => {
+  app.post('/api/ai/ask', aiRateLimit, async (request, response) => {
     const input = validateAskRequest(request.body)
     response.json({ result: await questionService.ask({ userId: request.user.id, ...input }) })
   })
 
   app.post('/api/ai/index/ensure', async (request, response) => {
     const ensured = await store.ensureIndexJobs(request.user.id)
-    const status = await store.getIndexStatus(request.user.id)
+    const status = await getReportedIndexStatus(store, request.user.id)
     response.json({ queued: ensured.queued, status })
   })
 
   app.get('/api/ai/index/status', async (request, response) => {
-    response.json({ status: await store.getIndexStatus(request.user.id) })
+    response.json({ status: await getReportedIndexStatus(store, request.user.id) })
   })
 
   app.post('/api/ai/index/retry', async (request, response) => {
     const retried = await store.retryFailedIndexJobs(request.user.id)
-    const status = await store.getIndexStatus(request.user.id)
+    const status = await getReportedIndexStatus(store, request.user.id)
     response.json({ retried, status })
   })
 
-  app.post('/api/ai/generate', async (request, response) => {
+  app.post('/api/ai/generate', aiRateLimit, async (request, response) => {
     const notes = await store.listNotes(request.user.id)
     const requestedIds = new Set(validateNoteIds(request.body?.noteIds))
     const sourceNotes = requestedIds.size ? notes.filter((note) => requestedIds.has(note.id)) : notes
@@ -229,6 +229,12 @@ function ensureIndexJobs(store, userId, logger) {
   } catch {
     logger.error('Knowledge indexing ensure failed.')
   }
+}
+
+async function getReportedIndexStatus(store, userId) {
+  const status = await store.getIndexStatus(userId)
+  const retrievalMode = getAICapabilities({ storageMode: store.storageMode }).retrievalMode
+  return { ...status, mode: retrievalMode }
 }
 
 function mountProductionClient(app, staticDir) {

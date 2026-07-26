@@ -54,7 +54,7 @@ export type Citation = {
 
 export type AIResultMode = 'model' | 'fallback'
 
-export type RetrievalMode = 'hybrid' | 'keyword' | 'basic'
+export type RetrievalMode = 'hybrid' | 'dense' | 'keyword' | 'basic'
 
 export type AskHistoryItem = {
   role: 'user' | 'assistant'
@@ -70,7 +70,7 @@ export type AskScope = {
 export type AskScopeMode = 'library' | 'current' | 'topic' | 'tag' | 'manual'
 
 export type IndexStatus = {
-  mode: 'hybrid' | 'basic'
+  mode: RetrievalMode
   total: number
   pending: number
   processing: number
