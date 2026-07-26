@@ -207,7 +207,7 @@ describe('Prisma indexing store', () => {
     expect(upsert).not.toHaveBeenCalled()
   })
 
-  it('reports only current searchable coverage as ready and resets only that user failed jobs', async () => {
+  it('uses one user-isolated aggregate query for searchable status coverage', async () => {
     const notes = [
       { id: 'ready', content: 'ready content' },
       { id: 'pending', content: 'pending content' },
@@ -217,25 +217,35 @@ describe('Prisma indexing store', () => {
       { id: 'empty', content: '' },
       { id: 'missing-job', content: 'missing job' },
     ]
+    const noteFindMany = vi.fn(async () => notes)
+    const jobFindMany = vi.fn(async () => [
+      { noteId: 'ready', contentHash: hashContent('ready content'), status: 'ready' },
+      { noteId: 'pending', contentHash: hashContent('pending content'), status: 'pending' },
+      { noteId: 'failed', contentHash: hashContent('failed content'), status: 'failed' },
+      { noteId: 'missing-chunk', contentHash: hashContent('missing chunk'), status: 'ready' },
+      { noteId: 'old-version', contentHash: hashContent('old version'), status: 'ready' },
+      { noteId: 'empty', contentHash: hashContent(''), status: 'ready' },
+    ])
+    const chunkFindMany = vi.fn(async () => [
+      { noteId: 'ready', contentHash: hashContent('ready content'), indexVersion: 1 },
+      { noteId: 'old-version', contentHash: hashContent('old version'), indexVersion: 0 },
+    ])
     const prisma = {
-      note: { findMany: vi.fn(async () => notes) },
+      note: { findMany: noteFindMany },
       knowledgeIndexJob: {
-        findMany: vi.fn(async () => [
-          { noteId: 'ready', contentHash: hashContent('ready content'), status: 'ready' },
-          { noteId: 'pending', contentHash: hashContent('pending content'), status: 'pending' },
-          { noteId: 'failed', contentHash: hashContent('failed content'), status: 'failed' },
-          { noteId: 'missing-chunk', contentHash: hashContent('missing chunk'), status: 'ready' },
-          { noteId: 'old-version', contentHash: hashContent('old version'), status: 'ready' },
-          { noteId: 'empty', contentHash: hashContent(''), status: 'ready' },
-        ]),
-        updateMany: vi.fn(async () => ({ count: 1 })),
+        findMany: jobFindMany,
       },
       knowledgeChunk: {
-        findMany: vi.fn(async () => [
-          { noteId: 'ready', contentHash: hashContent('ready content'), indexVersion: 1 },
-          { noteId: 'old-version', contentHash: hashContent('old version'), indexVersion: 0 },
-        ]),
+        findMany: chunkFindMany,
       },
+      $queryRawUnsafe: vi.fn(async () => [{
+        total: 7,
+        pending: 1,
+        processing: 0,
+        ready: 2,
+        failed: 1,
+        missing: 3,
+      }]),
     }
     const store = createPrismaStore({ prisma })
 
@@ -248,6 +258,28 @@ describe('Prisma indexing store', () => {
       failed: 1,
       missing: 3,
     })
+    expect(noteFindMany).not.toHaveBeenCalled()
+    expect(jobFindMany).not.toHaveBeenCalled()
+    expect(chunkFindMany).not.toHaveBeenCalled()
+    expect(prisma.$queryRawUnsafe).toHaveBeenCalledOnce()
+    const [query, ...parameters] = prisma.$queryRawUnsafe.mock.calls[0]
+    expect(query).toContain('COUNT(*)')
+    expect(query).toContain('FILTER')
+    expect(query).toContain('EXISTS')
+    expect(query).toContain('note."userId" = $1')
+    expect(query).toContain('job."userId" = $1')
+    expect(query).toContain('chunk."userId" = $1')
+    expect(parameters).toEqual(['user-1'])
+  })
+
+  it('resets only the requested user failed jobs', async () => {
+    const prisma = {
+      knowledgeIndexJob: {
+        updateMany: vi.fn(async () => ({ count: 1 })),
+      },
+    }
+    const store = createPrismaStore({ prisma })
+
     expect(await store.retryFailedIndexJobs('user-1')).toBe(1)
     expect(prisma.knowledgeIndexJob.updateMany).toHaveBeenCalledWith({
       where: { userId: 'user-1', status: 'failed' },

@@ -9,7 +9,7 @@ import { getAICapabilities, getEmbeddingConfig, getPlatformAIConfig } from './ai
 import { createEmbeddingClient } from './ai/embeddingClient.js'
 import { analyzeNote, generateOutput } from './ai/service.js'
 import { extractFromUrl, extractImage, extractMedia, getImportCapabilities } from './import/extractors.js'
-import { aiRateLimit, authRateLimit, importRateLimit, logServerError, publicError, requestContext, requireSameOrigin } from './security.js'
+import { aiRateLimit, authRateLimit, importRateLimit, indexControlRateLimit, logServerError, publicError, requestContext, requireSameOrigin } from './security.js'
 import { createPlatformChatClient, createRagQuestionService } from './rag/questionService.js'
 import { createDefaultStore } from './store/index.js'
 import { assertUpload, validateAskRequest, validateBulkNotes, validateImportUrl, validateNoteIds, validateNoteInput, validateOutputType } from './validation.js'
@@ -125,6 +125,8 @@ export function createImportApp(options = {}) {
     const input = validateAskRequest(request.body)
     response.json({ result: await questionService.ask({ userId: request.user.id, ...input }) })
   })
+
+  app.use('/api/ai/index', indexControlRateLimit)
 
   app.post('/api/ai/index/ensure', async (request, response) => {
     const ensured = await store.ensureIndexJobs(request.user.id)

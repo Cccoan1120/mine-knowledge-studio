@@ -63,6 +63,15 @@ export const aiRateLimit = rateLimit({
   handler: rateLimitHandler,
 })
 
+export const indexControlRateLimit = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 150,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  keyGenerator: authenticatedKey,
+  handler: rateLimitHandler,
+})
+
 export const importRateLimit = rateLimit({
   windowMs: 10 * 60 * 1000,
   limit: 10,

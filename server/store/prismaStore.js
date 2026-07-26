@@ -174,34 +174,49 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
     },
 
     async getIndexStatus(userId) {
-      const [notes, jobs, chunks] = await Promise.all([
-        prisma.note.findMany({
-          where: { userId },
-          select: { id: true, content: true },
-        }),
-        prisma.knowledgeIndexJob.findMany({
-          where: { userId },
-          select: { noteId: true, contentHash: true, status: true },
-        }),
-        prisma.knowledgeChunk.findMany({
-          where: { userId },
-          select: { noteId: true, contentHash: true, indexVersion: true },
-        }),
-      ])
-      const counts = { pending: 0, processing: 0, ready: 0, failed: 0, missing: 0 }
-      for (const state of buildIndexStates(notes, jobs, chunks)) {
-        if (state.ready) {
-          counts.ready += 1
-        } else if (state.job?.contentHash === state.contentHash && state.job.status !== 'ready') {
-          counts[state.job.status] += 1
-        } else {
-          counts.missing += 1
-        }
-      }
+      const [counts = {}] = await prisma.$queryRawUnsafe(
+        `
+          WITH "noteCoverage" AS (
+            SELECT
+              note."id",
+              job."status",
+              CASE
+                WHEN BTRIM(note."content") = '' THEN job."status" = 'ready'
+                WHEN job."status" = 'ready' THEN EXISTS (
+                  SELECT 1
+                  FROM "KnowledgeChunk" AS chunk
+                  WHERE chunk."noteId" = note."id"
+                    AND chunk."userId" = $1
+                    AND chunk."contentHash" = job."contentHash"
+                    AND chunk."indexVersion" = ${CURRENT_INDEX_VERSION}
+                )
+                ELSE FALSE
+              END AS "ready"
+            FROM "Note" AS note
+            LEFT JOIN "KnowledgeIndexJob" AS job
+              ON job."noteId" = note."id"
+              AND job."userId" = $1
+            WHERE note."userId" = $1
+          )
+          SELECT
+            COUNT(*)::int AS "total",
+            COUNT(*) FILTER (WHERE "status" = 'pending')::int AS "pending",
+            COUNT(*) FILTER (WHERE "status" = 'processing')::int AS "processing",
+            COUNT(*) FILTER (WHERE "status" = 'ready' AND "ready")::int AS "ready",
+            COUNT(*) FILTER (WHERE "status" = 'failed')::int AS "failed",
+            COUNT(*) FILTER (WHERE "status" IS NULL OR ("status" = 'ready' AND NOT "ready"))::int AS "missing"
+          FROM "noteCoverage"
+        `,
+        userId,
+      )
       return {
         mode: 'hybrid',
-        total: notes.length,
-        ...counts,
+        total: Number(counts.total || 0),
+        pending: Number(counts.pending || 0),
+        processing: Number(counts.processing || 0),
+        ready: Number(counts.ready || 0),
+        failed: Number(counts.failed || 0),
+        missing: Number(counts.missing || 0),
       }
     },
 

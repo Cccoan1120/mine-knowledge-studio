@@ -456,7 +456,7 @@ describe('RAG question and index APIs', () => {
     })
   })
 
-  it('does not spend the expensive AI quota on index status polling', async () => {
+  it('allows ten minutes of normal index polling without spending the expensive AI quota', async () => {
     const questionService = {
       ask: vi.fn(async () => ({
         answer: 'answer',
@@ -473,11 +473,64 @@ describe('RAG question and index APIs', () => {
     const apiUrl = await serveApp({ questionService })
     const session = await registerSession(apiUrl, `index-poll-${Date.now()}@example.com`)
 
-    for (let attempt = 0; attempt < 31; attempt += 1) {
+    for (let attempt = 0; attempt < 121; attempt += 1) {
       const response = await fetch(`${apiUrl}/api/ai/index/status`, {
         headers: authHeaders(session.cookie),
       })
       expect(response.status).toBe(200)
+    }
+
+    const ask = await fetch(`${apiUrl}/api/ai/ask`, {
+      method: 'POST',
+      headers: authHeaders(session.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ question: 'Still available?' }),
+    })
+    expect(ask.status).toBe(200)
+    expect(questionService.ask).toHaveBeenCalledOnce()
+  })
+
+  it('eventually rate limits the index control plane without blocking ask', async () => {
+    const questionService = {
+      ask: vi.fn(async () => ({
+        answer: 'answer',
+        knowledgeAnswer: 'answer',
+        generalSupplement: '',
+        sourceIds: [],
+        citations: [],
+        insufficient: true,
+        mode: 'fallback',
+        retrievalMode: 'basic',
+        scope: {},
+      })),
+    }
+    const apiUrl = await serveApp({ questionService })
+    const session = await registerSession(apiUrl, `index-control-${Date.now()}@example.com`)
+    let successfulPolls = 0
+    let limitedResponse
+
+    for (let attempt = 0; attempt < 300; attempt += 1) {
+      const response = await fetch(`${apiUrl}/api/ai/index/status`, {
+        headers: authHeaders(session.cookie),
+      })
+      if (response.status === 429) {
+        limitedResponse = response
+        break
+      }
+      expect(response.status).toBe(200)
+      successfulPolls += 1
+    }
+
+    expect(successfulPolls).toBeGreaterThanOrEqual(121)
+    expect(limitedResponse?.status).toBe(429)
+    for (const [path, method] of [
+      ['/api/ai/index/ensure', 'POST'],
+      ['/api/ai/index/retry', 'POST'],
+    ]) {
+      const response = await fetch(`${apiUrl}${path}`, {
+        method,
+        headers: authHeaders(session.cookie),
+      })
+      expect(response.status).toBe(429)
     }
 
     const ask = await fetch(`${apiUrl}/api/ai/ask`, {
