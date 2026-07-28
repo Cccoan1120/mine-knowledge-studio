@@ -2,7 +2,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { createMemoryStore } from '../store/memoryStore.js'
-import { createRagQuestionService } from './questionService.js'
+import { createPlatformChatClient, createRagQuestionService } from './questionService.js'
 
 function chunk(id, noteId, overrides = {}) {
   return {
@@ -28,6 +28,37 @@ function postgresStore(result) {
 }
 
 describe('RAG question service', () => {
+  it('sends Terra-compatible Chat Completions parameters', async () => {
+    const fetchImpl = vi.fn(async (_url, options) => {
+      const request = JSON.parse(options.body)
+      expect(request).toMatchObject({
+        model: 'gpt-5.6-terra',
+        reasoning_effort: 'none',
+        response_format: { type: 'json_object' },
+      })
+      expect(request).not.toHaveProperty('temperature')
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: '{"knowledgeAnswer":"Answer"}' } }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    const client = createPlatformChatClient({
+      config: {
+        apiKey: 'test-key',
+        baseUrl: 'https://ai.example.test/v1',
+        model: 'gpt-5.6-terra',
+      },
+      fetchImpl,
+    })
+
+    await expect(client.completeJSON([{ role: 'user', content: 'Question' }])).resolves.toEqual({
+      knowledgeAnswer: 'Answer',
+    })
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
   it('fuses dense and keyword candidates and enforces context diversity limits', async () => {
     const candidates = [
       chunk('a1', 'a'),

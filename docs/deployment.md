@@ -56,7 +56,7 @@ DATABASE_URL=postgresql://user:password@host.neon.tech/mine?sslmode=require
 AUTH_SECRET=replace-with-a-long-random-secret
 AI_API_KEY=
 AI_BASE_URL=https://api.openai.com/v1
-AI_MODEL=gpt-4o-mini
+AI_MODEL=gpt-5.6-terra
 AI_EMBEDDING_ENABLED=true
 AI_EMBEDDING_API_KEY=
 AI_EMBEDDING_BASE_URL=

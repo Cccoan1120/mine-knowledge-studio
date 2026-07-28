@@ -1,11 +1,12 @@
 // @vitest-environment node
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { getAICapabilities, getEmbeddingConfig } from './config.js'
+import { getAICapabilities, getEmbeddingConfig, getPlatformAIConfig } from './config.js'
 
 const embeddingEnvironmentKeys = [
   'AI_API_KEY',
   'AI_BASE_URL',
+  'AI_MODEL',
   'AI_EMBEDDING_API_KEY',
   'AI_EMBEDDING_BASE_URL',
   'AI_EMBEDDING_ENABLED',
@@ -18,6 +19,14 @@ afterEach(() => {
 })
 
 describe('embedding configuration', () => {
+  it('defaults chat to Terra without changing the embedding model or dimensions', () => {
+    expect(getPlatformAIConfig().model).toBe('gpt-5.6-terra')
+    expect(getEmbeddingConfig()).toMatchObject({
+      model: 'text-embedding-3-small',
+      dimensions: 1536,
+    })
+  })
+
   it('uses shared AI credentials as fallbacks and fixed defaults', () => {
     process.env.AI_API_KEY = 'shared-key'
     process.env.AI_BASE_URL = 'https://shared.example.test/v1'

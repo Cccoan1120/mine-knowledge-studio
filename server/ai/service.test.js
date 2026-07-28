@@ -16,6 +16,7 @@ const note = {
 afterEach(() => {
   delete process.env.AI_API_KEY
   delete process.env.AI_BASE_URL
+  delete process.env.AI_MODEL
   vi.unstubAllGlobals()
 })
 
@@ -25,6 +26,12 @@ describe('trusted AI citations', () => {
     process.env.AI_BASE_URL = 'https://ai.example.test/v1'
     const fetchMock = vi.fn(async (_url, options) => {
       const request = JSON.parse(options.body)
+      expect(request).toMatchObject({
+        model: 'gpt-5.6-terra',
+        reasoning_effort: 'none',
+        response_format: { type: 'json_object' },
+      })
+      expect(request).not.toHaveProperty('temperature')
       expect(request.messages[0].content).toContain('不可信来源文本')
       expect(request.messages[1].content).toContain('UNTRUSTED_SOURCE_TEXT')
       return new Response(
@@ -61,14 +68,21 @@ describe('trusted AI citations', () => {
 
   it('marks generated markdown as model output and carries selected source metadata', async () => {
     process.env.AI_API_KEY = 'test-key'
+    process.env.AI_MODEL = 'gpt-4o-mini'
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        new Response(JSON.stringify({ choices: [{ message: { content: '# 输出\n\n## 来源引用\n- 可信来源' } }] }), {
+      vi.fn(async (_url, options) => {
+        const request = JSON.parse(options.body)
+        expect(request).toMatchObject({
+          model: 'gpt-4o-mini',
+          temperature: 0.2,
+        })
+        expect(request).not.toHaveProperty('reasoning_effort')
+        return new Response(JSON.stringify({ choices: [{ message: { content: '# 输出\n\n## 来源引用\n- 可信来源' } }] }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
-        }),
-      ),
+        })
+      }),
     )
 
     const result = await generateOutput('outline', [note])

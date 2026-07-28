@@ -1,4 +1,5 @@
 import { getPlatformAIConfig } from './config.js'
+import { buildChatCompletionRequest } from './chatCompletionRequest.js'
 
 export async function analyzeNote(note, existingNotes) {
   const config = getPlatformAIConfig()
@@ -91,12 +92,12 @@ async function chatText(config, messages, jsonMode = false) {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${config.apiKey}`,
     },
-    body: JSON.stringify({
+    body: JSON.stringify(buildChatCompletionRequest({
       model: config.model,
       messages,
       temperature: 0.2,
-      ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
-    }),
+      jsonMode,
+    })),
     signal: AbortSignal.timeout(60_000),
   })
 

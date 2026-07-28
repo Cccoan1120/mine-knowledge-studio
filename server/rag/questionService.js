@@ -1,4 +1,5 @@
 import { answerQuestion } from '../ai/service.js'
+import { buildChatCompletionRequest } from '../ai/chatCompletionRequest.js'
 import { selectContext } from './context.js'
 import { buildFallbackQuery } from './fallbackQuery.js'
 import { fuseRankings } from './rrf.js'
@@ -117,12 +118,12 @@ export function createPlatformChatClient({ config, fetchImpl = fetch }) {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${config.apiKey}`,
           },
-          body: JSON.stringify({
+          body: JSON.stringify(buildChatCompletionRequest({
             model: config.model,
             messages,
             temperature: 0.1,
-            response_format: { type: 'json_object' },
-          }),
+            jsonMode: true,
+          })),
           signal: AbortSignal.timeout(60_000),
         })
       } catch {
