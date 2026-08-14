@@ -135,18 +135,14 @@ select {
 
 .brand-mark,
 .compact-brand {
-  display: grid;
-  place-items: center;
-  color: #fff;
-  background: var(--accent);
-  font-weight: 750;
+  display: block;
+  object-fit: cover;
   border-radius: 6px;
 }
 
 .brand-mark {
   width: 36px;
   height: 36px;
-  font-size: 17px;
 }
 
 .brand-block h1 {

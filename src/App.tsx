@@ -225,7 +225,7 @@ function App() {
         <section className="auth-panel" aria-label="Mine 登录注册">
           <div className="auth-copy">
             <div className="auth-brand">
-              <div className="brand-mark">M</div>
+              <img className="brand-mark" src="/mine-logo.png" alt="" />
               <div>
                 <strong>Mine</strong>
                 <span>素材工作室</span>
@@ -709,7 +709,7 @@ function App() {
       {showLibrary ? (
         <aside className="sidebar" aria-label="素材库导航">
           <div className="brand-block">
-            <div className="brand-mark">M</div>
+            <img className="brand-mark" src="/mine-logo.png" alt="" />
             <div>
               <h1>Mine</h1>
               <p>素材工作室</p>
@@ -825,7 +825,7 @@ function App() {
         </aside>
       ) : (
         <aside className="compact-rail" aria-label="快速导航">
-          <div className="compact-brand">M</div>
+          <img className="compact-brand" src="/mine-logo.png" alt="" />
           <button type="button" onClick={() => setShowLibrary(true)} aria-label="打开素材区" title="打开素材区">
             <PanelLeftOpen size={18} />
           </button>
