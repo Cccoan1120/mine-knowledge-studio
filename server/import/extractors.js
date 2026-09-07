@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { JSDOM } from 'jsdom'
 import TurndownService from 'turndown'
 import { safeFetchExternal, validateExternalUrl } from './safeFetch.js'
+import { withPublicMediaProxy } from './mediaProxy.js'
 
 const execFileAsync = promisify(execFile)
 const maxMediaBytes = 50 * 1024 * 1024
@@ -737,7 +738,7 @@ function stripMarkdown(markdown) {
 
 async function readYtDlpInfo(url) {
   if (process.env.MINE_SKIP_YTDLP === '1') throw Object.assign(new Error('yt-dlp skipped'), { code: 'ENOENT' })
-  const { stdout } = await execFileAsync('yt-dlp', createYtDlpArgs(['-J', '--skip-download', '--no-warnings', url]), {
+  const { stdout } = await runYtDlp(['-J', '--skip-download', '--no-warnings', url], {
     timeout: ytDlpTimeout(15000),
     maxBuffer: 1024 * 1024 * 8,
   })
@@ -786,9 +787,8 @@ async function tryTranscribeVideo(url, aiConfig) {
 
     try {
       const outputTemplate = join(tempDir, 'audio.%(ext)s')
-      await execFileAsync(
-        'yt-dlp',
-        createYtDlpArgs(['-f', 'ba', '--max-filesize', '50M', '-o', outputTemplate, '--no-warnings', url]),
+      await runYtDlp(
+        ['-f', 'ba[protocol^=http]/ba[protocol^=m3u8]', '--max-filesize', '50M', '-o', outputTemplate, '--no-warnings', url],
         {
           timeout: 120000,
           maxBuffer: 1024 * 1024 * 4,
@@ -1007,7 +1007,7 @@ function podcastDiagnostics(audioDetected, transcriptionConfigured) {
   }
 }
 
-export function createYtDlpArgs(args) {
+export function createYtDlpArgs(args, proxyUrl) {
   const cookiesPath = process.env.MINE_YTDLP_COOKIES?.trim()
   const browser = process.env.MINE_YTDLP_BROWSER?.trim()
   const authArgs = cookiesPath
@@ -1016,7 +1016,25 @@ export function createYtDlpArgs(args) {
       ? ['--cookies-from-browser', browser]
       : []
 
-  return [...authArgs, '--no-playlist', '--socket-timeout', '10', ...args]
+  const proxyArgs = proxyUrl ? ['--proxy', proxyUrl, '--geo-verification-proxy', proxyUrl] : []
+  return ['--ignore-config', ...authArgs, ...proxyArgs, '--downloader', 'native', '--no-remote-components', '--no-playlist', '--socket-timeout', '10', ...args]
+}
+
+function runYtDlp(args, options) {
+  return withPublicMediaProxy((proxyUrl) => execFileAsync('yt-dlp', createYtDlpArgs(args, proxyUrl), {
+    ...options,
+    env: {
+      ...process.env,
+      HTTP_PROXY: proxyUrl,
+      http_proxy: proxyUrl,
+      HTTPS_PROXY: proxyUrl,
+      https_proxy: proxyUrl,
+      ALL_PROXY: proxyUrl,
+      all_proxy: proxyUrl,
+      NO_PROXY: '',
+      no_proxy: '',
+    },
+  }))
 }
 
 async function withMediaSlot(task) {

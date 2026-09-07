@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
+import { createPrismaGovernanceStore } from '../governance/prismaGovernanceStore.js'
 import { hashContent } from '../rag/hash.js'
+import { createPrismaWikiStore } from '../wiki/prismaWikiStore.js'
 import { normalizeNote, publicNote, publicUser } from './memoryStore.js'
+import { prepareImportBatch } from './importBatch.js'
 
 const require = createRequire(import.meta.url)
 const CURRENT_INDEX_VERSION = 1
@@ -76,19 +79,18 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
       return prisma.$transaction(async (transaction) => {
         const existing = await transaction.note.findFirst({ where: { id: noteId, userId } })
         if (!existing) return null
-        const note = normalizeNote({ ...existing, ...patch, id: noteId, userId, updatedAt: new Date().toISOString() })
+        const updatedAt = new Date(Math.max(Date.now(), new Date(existing.updatedAt).getTime() + 1))
+        const note = normalizeNote({ ...existing, ...patch, id: noteId, userId, updatedAt })
+        const data = { updatedAt }
+        for (const field of ['title', 'content', 'summary', 'tags', 'topic', 'source', 'relatedNoteIds']) {
+          if (Object.hasOwn(patch, field)) data[field] = note[field]
+        }
         const updated = await transaction.note.update({
-          where: { id: noteId },
-          data: {
-            title: note.title,
-            content: note.content,
-            summary: note.summary,
-            tags: note.tags,
-            topic: note.topic,
-            source: note.source,
-            relatedNoteIds: note.relatedNoteIds,
-            updatedAt: new Date(note.updatedAt),
-          },
+          where: { id: noteId, userId, ...(patch.expectedUpdatedAt ? { updatedAt: new Date(patch.expectedUpdatedAt) } : {}) },
+          data,
+        }).catch(error => {
+          if (error.code === 'P2025') throw Object.assign(new Error('素材已在其他位置更新，请先导出草稿再重新加载。'), { status: 409 })
+          throw error
         })
         if (note.content !== existing.content) {
           await upsertIndexJob(transaction, {
@@ -109,11 +111,20 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
     },
 
     async bulkCreateNotes(userId, inputs) {
-      const created = []
-      for (const input of inputs) {
-        created.push(await this.createNote(userId, input))
-      }
-      return created
+      return prisma.$transaction(async transaction => {
+        const owned = await transaction.note.findMany({ where: { userId, id: { in: inputs.map(input => input.importId || input.id).filter(Boolean) } } })
+        const batch = prepareImportBatch(userId, inputs, new Map(owned.map(note => [note.id, note]))).map(normalizeNote)
+        const created = []
+        for (const note of batch) {
+          const data = { ...note, createdAt: new Date(note.createdAt), updatedAt: new Date(note.updatedAt) }
+          const existing = await transaction.note.findUnique({ where: { id: note.id } })
+          if (existing) { created.push(publicNote(existing)); continue }
+          const saved = await transaction.note.create({ data })
+          await upsertIndexJob(transaction, { userId, noteId: saved.id, contentHash: hashContent(saved.content) })
+          created.push(publicNote(saved))
+        }
+        return created
+      }, { timeout: 60_000 })
     },
 
     async ensureIndexJobs(userId) {
@@ -220,6 +231,33 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
       }
     },
 
+    async getIndexCoverage(userId, scope = {}) {
+      const where = { userId }
+      if (scope.noteIds?.length) where.id = { in: scope.noteIds }
+      if (scope.topics?.length) where.topic = { in: scope.topics }
+      if (scope.tags?.length) where.tags = { hasSome: scope.tags }
+      const notes = await prisma.note.findMany({ where, select: { id: true, content: true } })
+      if (!notes.length) return { total: 0, pending: 0, processing: 0, ready: 0, failed: 0, missing: 0 }
+      const noteIds = notes.map((note) => note.id)
+      const [jobs, chunks] = await Promise.all([
+        prisma.knowledgeIndexJob.findMany({ where: { userId, noteId: { in: noteIds } } }),
+        prisma.knowledgeChunk.findMany({
+          where: { userId, noteId: { in: noteIds } },
+          select: { noteId: true, contentHash: true, indexVersion: true },
+        }),
+      ])
+      const states = buildIndexStates(notes, jobs, chunks)
+      return states.reduce((counts, state) => {
+        counts.total += 1
+        if (state.ready) counts.ready += 1
+        else if (state.job?.status === 'pending') counts.pending += 1
+        else if (state.job?.status === 'processing') counts.processing += 1
+        else if (state.job?.status === 'failed') counts.failed += 1
+        else counts.missing += 1
+        return counts
+      }, { total: 0, pending: 0, processing: 0, ready: 0, failed: 0, missing: 0 })
+    },
+
     async retryFailedIndexJobs(userId) {
       const result = await prisma.knowledgeIndexJob.updateMany({
         where: { userId, status: 'failed' },
@@ -266,6 +304,7 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
               chunk."ordinal",
               note."title",
               note."source",
+              note."updatedAt" AS "sourceUpdatedAt",
               chunk."headingPath",
               chunk."content",
               chunk."startOffset",
@@ -309,6 +348,7 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
               chunk."ordinal",
               note."title",
               note."source",
+              note."updatedAt" AS "sourceUpdatedAt",
               chunk."headingPath",
               chunk."content",
               chunk."startOffset",
@@ -503,6 +543,9 @@ export function createPrismaStore({ prisma = createPrismaClient() } = {}) {
       })
       return result.count === 1
     },
+
+    ...createPrismaWikiStore(prisma),
+    ...createPrismaGovernanceStore(prisma),
   }
 }
 
@@ -607,6 +650,7 @@ function normalizeCandidate(candidate) {
     ordinal: Number(candidate.ordinal),
     title: String(candidate.title || ''),
     source: String(candidate.source || ''),
+    sourceUpdatedAt: candidate.sourceUpdatedAt ? new Date(candidate.sourceUpdatedAt).toISOString() : null,
     headingPath: Array.isArray(candidate.headingPath) ? candidate.headingPath.map(String) : [],
     content: String(candidate.content || ''),
     startOffset: Number(candidate.startOffset),

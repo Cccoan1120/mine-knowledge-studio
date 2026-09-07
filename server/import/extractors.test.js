@@ -164,6 +164,15 @@ describe('external content extractors', () => {
     }
   })
 
+  it('pins media requests to the guarded proxy and ignores external downloader configuration', () => {
+    const proxy = 'http://127.0.0.1:12345'
+    const args = createYtDlpArgs(['-J', 'https://www.bilibili.com/video/test'], proxy)
+    expect(args).toEqual(expect.arrayContaining(['--ignore-config', '--no-remote-components']))
+    expect(args[args.indexOf('--proxy') + 1]).toBe(proxy)
+    expect(args[args.indexOf('--geo-verification-proxy') + 1]).toBe(proxy)
+    expect(args[args.indexOf('--downloader') + 1]).toBe('native')
+  })
+
   it('returns a needs-action image result without an api key', async () => {
     const result = await extractImage({ imageUrl: 'https://example.com/a.png', aiConfig: {} })
 

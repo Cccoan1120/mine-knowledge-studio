@@ -24,6 +24,30 @@ const serviceMocks = vi.hoisted(() => ({
   bulkImportNotes: vi.fn(),
 }))
 
+const wikiMocks = vi.hoisted(() => ({
+  acceptWikiCandidate: vi.fn(),
+  createWikiPage: vi.fn(),
+  createWikiProject: vi.fn(),
+  deleteWikiPage: vi.fn(),
+  deleteWikiProject: vi.fn(),
+  discardWikiCandidate: vi.fn(),
+  exportWikiPage: vi.fn(),
+  exportWikiProject: vi.fn(),
+  generateWikiOutline: vi.fn(),
+  generateWikiPages: vi.fn(),
+  getWikiProject: vi.fn(),
+  listWikiProjects: vi.fn(),
+  refreshWikiPage: vi.fn(),
+  updateWikiPage: vi.fn(),
+}))
+
+const governanceMocks = vi.hoisted(() => ({
+  listGovernanceCandidates: vi.fn(),
+  dismissGovernanceCandidate: vi.fn(),
+  linkDuplicateCandidate: vi.fn(),
+  applyTagCandidate: vi.fn(),
+}))
+
 vi.mock('./services/aiService', () => serviceMocks)
 vi.mock('./services/authService', () => ({
   getCurrentUser: serviceMocks.getCurrentUser,
@@ -39,6 +63,8 @@ vi.mock('./services/noteService', () => ({
   bulkImportNotes: serviceMocks.bulkImportNotes,
 }))
 vi.mock('./services/storage', () => ({ loadLocalNotesForMigration: () => [], markLocalNotesMigrated: vi.fn() }))
+vi.mock('./services/wikiService', () => wikiMocks)
+vi.mock('./services/governanceService', () => governanceMocks)
 
 const note: Note = {
   id: 'note-1',
@@ -70,6 +96,8 @@ const answer = (text: string) => ({
 })
 
 beforeEach(() => {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440, writable: true })
+  vi.spyOn(window, 'confirm').mockReturnValue(true)
   localStorage.clear()
   vi.clearAllMocks()
   serviceMocks.getCurrentUser.mockResolvedValue(user)
@@ -88,6 +116,12 @@ beforeEach(() => {
   serviceMocks.ensureIndex.mockResolvedValue(settledIndex)
   serviceMocks.getIndexStatus.mockResolvedValue(settledIndex)
   serviceMocks.retryIndex.mockResolvedValue(settledIndex)
+  wikiMocks.listWikiProjects.mockResolvedValue([])
+  governanceMocks.listGovernanceCandidates.mockResolvedValue({
+    duplicates: [],
+    tags: [],
+    stats: { noteCount: 1, tagCount: 1 },
+  })
 })
 
 afterEach(() => {
@@ -285,5 +319,28 @@ describe('Ask session interactions', () => {
       { role: 'user', content: '问题一' },
       { role: 'assistant', content: '答案一' },
     ])
+  })
+})
+
+describe('workspace switching', () => {
+  it('switches between the library and the independent Wiki workspace', async () => {
+    render(createElement(Root))
+    await screen.findByDisplayValue('创作笔记')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Wiki' }))
+    await screen.findByPlaceholderText('例如：内容复用手册')
+    expect(wikiMocks.listWikiProjects).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: '素材库' }))
+    expect(await screen.findByDisplayValue('创作笔记')).toBeTruthy()
+  })
+})
+
+describe('library governance entry', () => {
+  it('opens the independent governance review panel from the library', async () => {
+    render(createElement(Root))
+    fireEvent.click(await screen.findByRole('button', { name: '素材治理' }))
+    expect(await screen.findByRole('dialog', { name: '素材治理' })).toBeTruthy()
+    expect(governanceMocks.listGovernanceCandidates).toHaveBeenCalledTimes(1)
   })
 })

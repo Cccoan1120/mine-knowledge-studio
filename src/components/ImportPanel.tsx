@@ -126,8 +126,7 @@ export function ImportPanel({ onClose, onSave, onImportMarkdown }: ImportPanelPr
       <section className="import-panel" aria-label="导入材料">
         <header className="import-header">
           <div>
-            <p>导入材料</p>
-            <h2>把外部内容收进 Mine</h2>
+            <h2>导入素材</h2>
           </div>
           <button type="button" onClick={onClose} aria-label="关闭导入面板">
             <X size={17} />

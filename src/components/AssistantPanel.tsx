@@ -89,8 +89,8 @@ export function AssistantPanel({
 
       <header className="assistant-header">
         <div>
-          <p>素材助手</p>
-          <h2>基于已选来源</h2>
+          <h2>素材助手</h2>
+          <p>当前素材 · {note?.topic || 'Inbox'}</p>
         </div>
         <button type="button" className="assistant-collapse" onClick={onCollapse} aria-label="收起 AI 面板" title="收起 AI 面板">
           <PanelRightClose size={17} />
@@ -134,7 +134,7 @@ export function AssistantPanel({
         <section className="assistant-section">
           <div className="assistant-card">
             <p className="section-kicker">摘要</p>
-            <p>{note?.summary || '点击“AI 收纳”后，Mine 会生成摘要、标签、主题和关联素材。'}</p>
+            <p>{note?.summary || '暂无摘要'}</p>
           </div>
 
           <div className="assistant-card">

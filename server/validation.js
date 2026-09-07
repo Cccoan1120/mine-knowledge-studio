@@ -16,13 +16,18 @@ export function validateNoteInput(value, { partial = false } = {}) {
     else if (field === 'source') result.source = limitedString(input.source || '', 2048, '来源')
   }
 
+  if (partial && input.expectedUpdatedAt !== undefined) {
+    const version = String(input.expectedUpdatedAt)
+    if (!Number.isFinite(Date.parse(version))) throw badRequest('保存版本无效。')
+    result.expectedUpdatedAt = new Date(version).toISOString()
+  }
   return result
 }
 
 export function validateBulkNotes(value) {
   const notes = Array.isArray(value?.notes) ? value.notes : []
   if (notes.length > 100) throw badRequest('一次最多导入 100 条素材。')
-  return notes.map((note) => validateNoteInput(note))
+  return notes.map((note) => ({ ...validateNoteInput(note), importId: limitedString(note?.id || '', 128, '导入标识') }))
 }
 
 export function validateQuestion(value) {
@@ -61,8 +66,64 @@ export function validateAskRequest(value) {
   }
 }
 
+export function validateWikiProjectInput(value, { partial = false } = {}) {
+  const input = plainObject(value) ? value : {}
+  const result = {}
+  if (!partial || Object.prototype.hasOwnProperty.call(input, 'title')) {
+    result.title = limitedString(input.title, 200, 'Wiki 标题').trim()
+    if (!result.title) throw badRequest('请输入 Wiki 标题。')
+  }
+  if (!partial || Object.prototype.hasOwnProperty.call(input, 'topic')) {
+    result.topic = limitedString(input.topic, 2_000, 'Wiki 主题').trim()
+    if (!result.topic) throw badRequest('请输入 Wiki 主题。')
+  }
+  if (!partial || Object.prototype.hasOwnProperty.call(input, 'scope')) result.scope = validateWikiScope(input.scope)
+  return result
+}
+
+export function validateWikiPageInput(value, { partial = false } = {}) {
+  const input = plainObject(value) ? value : {}
+  const result = {}
+  if (!partial || Object.prototype.hasOwnProperty.call(input, 'title')) {
+    result.title = limitedString(input.title, 200, '页面标题').trim()
+    if (!result.title) throw badRequest('请输入页面标题。')
+  }
+  if (!partial || Object.prototype.hasOwnProperty.call(input, 'summary')) {
+    result.summary = limitedString(input.summary || '', 2_000, '页面说明')
+  }
+  if (partial && Object.prototype.hasOwnProperty.call(input, 'content')) {
+    result.content = limitedString(input.content || '', 1_000_000, '页面正文')
+  }
+  if (partial && Object.prototype.hasOwnProperty.call(input, 'position')) {
+    if (!Number.isInteger(input.position) || input.position < 0 || input.position > 19) throw badRequest('页面顺序无效。')
+    result.position = input.position
+  }
+  return result
+}
+
+export function validateWikiPageIds(value) {
+  return uniqueStringArray(value, 20, 128, 'Wiki page IDs')
+}
+
 export function validateNoteIds(value) {
   return stringArray(value, 20, 128, '来源素材')
+}
+
+export function validateGovernanceDismissal(value) {
+  const input = plainObject(value) ? value : {}
+  const kind = String(input.kind || '')
+  if (!['duplicate', 'tag'].includes(kind)) throw badRequest('治理候选类型无效。')
+  return { kind, fingerprint: validateFingerprint(input.fingerprint) }
+}
+
+export function validateGovernanceAction(value, { tag = false } = {}) {
+  const input = plainObject(value) ? value : {}
+  const result = { fingerprint: validateFingerprint(input.fingerprint) }
+  if (tag) {
+    result.canonicalTag = limitedString(input.canonicalTag, 50, '规范标签').trim().replace(/^#+\s*/, '')
+    if (!result.canonicalTag || /[\r\n]/.test(result.canonicalTag)) throw badRequest('请输入有效的规范标签。')
+  }
+  return result
 }
 
 export function validateOutputType(value) {
@@ -134,6 +195,16 @@ function uniqueStringArray(value, maxItems, maxLength, label) {
   return normalized
 }
 
+function validateWikiScope(value) {
+  if (value === undefined) return { noteIds: [], topics: [], tags: [] }
+  if (!plainObject(value)) throw badRequest('Wiki 素材范围格式无效。')
+  return {
+    noteIds: Object.prototype.hasOwnProperty.call(value, 'noteIds') ? uniqueStringArray(value.noteIds, 20, 128, 'Scope note IDs') : [],
+    topics: Object.prototype.hasOwnProperty.call(value, 'topics') ? uniqueStringArray(value.topics, 20, 100, 'Scope topics') : [],
+    tags: Object.prototype.hasOwnProperty.call(value, 'tags') ? uniqueStringArray(value.tags, 20, 100, 'Scope tags') : [],
+  }
+}
+
 function plainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
@@ -142,6 +213,12 @@ function limitedString(value, maxLength, label) {
   const text = String(value ?? '')
   if (text.length > maxLength) throw badRequest(`${label}内容过长。`)
   return text
+}
+
+function validateFingerprint(value) {
+  const fingerprint = String(value || '')
+  if (!/^[a-f0-9]{64}$/.test(fingerprint)) throw badRequest('治理候选指纹无效。')
+  return fingerprint
 }
 
 function badRequest(message) {

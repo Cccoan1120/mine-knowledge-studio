@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { createMemoryGovernanceStore } from '../governance/memoryGovernanceStore.js'
+import { createMemoryWikiStore } from '../wiki/memoryWikiStore.js'
+import { prepareImportBatch } from './importBatch.js'
 
 export function createMemoryStore() {
   const users = new Map()
@@ -51,7 +54,11 @@ export function createMemoryStore() {
     async updateNote(userId, noteId, patch) {
       const current = notes.get(noteId)
       if (!current || current.userId !== userId) return null
-      const updated = normalizeNote({ ...current, ...patch, userId, id: noteId, updatedAt: new Date().toISOString() })
+      if (patch.expectedUpdatedAt && patch.expectedUpdatedAt !== current.updatedAt) {
+        throw Object.assign(new Error('素材已在其他位置更新，请先导出草稿再重新加载。'), { status: 409 })
+      }
+      const updatedAt = new Date(Math.max(Date.now(), Date.parse(current.updatedAt) + 1)).toISOString()
+      const updated = normalizeNote({ ...current, ...patch, userId, id: noteId, updatedAt })
       notes.set(noteId, updated)
       return publicNote(updated)
     },
@@ -63,11 +70,10 @@ export function createMemoryStore() {
     },
 
     async bulkCreateNotes(userId, inputs) {
-      const created = []
-      for (const input of inputs) {
-        created.push(await this.createNote(userId, input))
-      }
-      return created
+      const ownedNotes = new Map(Array.from(notes.values()).filter(note => note.userId === userId).map(note => [note.id, note]))
+      const batch = prepareImportBatch(userId, inputs, ownedNotes).map(normalizeNote)
+      for (const note of batch) if (!notes.has(note.id)) notes.set(note.id, note)
+      return batch.map(note => publicNote(notes.get(note.id)))
     },
 
     async ensureIndexJobs() {
@@ -110,6 +116,20 @@ export function createMemoryStore() {
     async recordIndexJobFailure() {
       return false
     },
+
+    async getIndexCoverage(userId, scope = {}) {
+      const scoped = Array.from(notes.values()).filter((note) => {
+        if (note.userId !== userId) return false
+        if (scope.noteIds?.length && !scope.noteIds.includes(note.id)) return false
+        if (scope.topics?.length && !scope.topics.includes(note.topic)) return false
+        if (scope.tags?.length && !scope.tags.some((tag) => note.tags.includes(tag))) return false
+        return true
+      })
+      return { total: scoped.length, pending: 0, processing: 0, ready: scoped.length, failed: 0, missing: 0 }
+    },
+
+    ...createMemoryWikiStore({ notes }),
+    ...createMemoryGovernanceStore({ notes, normalizeNote, publicNote }),
   }
 }
 
