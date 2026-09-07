@@ -624,6 +624,128 @@ describe('health api', () => {
   })
 })
 
+describe('Wiki api', () => {
+  it('keeps Wiki projects and pages isolated by user', async () => {
+    const apiUrl = await serveApp()
+    const owner = await registerSession(apiUrl, 'wiki-owner@example.com')
+    const other = await registerSession(apiUrl, 'wiki-other@example.com')
+    const createdResponse = await fetch(`${apiUrl}/api/wikis`, {
+      method: 'POST',
+      headers: authHeaders(owner.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ title: 'Mine Wiki', topic: 'Grounded knowledge', scope: { noteIds: [], topics: [], tags: [] } }),
+    })
+    const created = await createdResponse.json()
+    expect(createdResponse.status).toBe(201)
+
+    const pageResponse = await fetch(`${apiUrl}/api/wikis/${created.project.id}/pages`, {
+      method: 'POST',
+      headers: authHeaders(owner.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ title: 'Overview', summary: 'The main page.' }),
+    })
+    expect(pageResponse.status).toBe(201)
+
+    const ownerDetail = await fetch(`${apiUrl}/api/wikis/${created.project.id}`, { headers: authHeaders(owner.cookie) }).then((response) => response.json())
+    const otherList = await fetch(`${apiUrl}/api/wikis`, { headers: authHeaders(other.cookie) }).then((response) => response.json())
+    const crossRead = await fetch(`${apiUrl}/api/wikis/${created.project.id}`, { headers: authHeaders(other.cookie) })
+    expect(ownerDetail.project.pages).toHaveLength(1)
+    expect(otherList.projects).toEqual([])
+    expect(crossRead.status).toBe(404)
+  })
+
+  it('rejects generation explicitly when the platform LLM is not configured', async () => {
+    const apiUrl = await serveApp()
+    const owner = await registerSession(apiUrl, 'wiki-no-model@example.com')
+    const created = await fetch(`${apiUrl}/api/wikis`, {
+      method: 'POST',
+      headers: authHeaders(owner.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ title: 'Mine Wiki', topic: 'Grounded knowledge', scope: {} }),
+    }).then((response) => response.json())
+
+    const response = await fetch(`${apiUrl}/api/wikis/${created.project.id}/outline`, {
+      method: 'POST',
+      headers: authHeaders(owner.cookie),
+    })
+    const body = await response.json()
+    expect(response.status).toBe(409)
+    expect(body.error).toContain('LLM')
+  })
+
+  it('queues outline and page generation through the trusted service', async () => {
+    const wikiService = {
+      queueOutline: vi.fn(async (_userId, projectId) => ({ id: 'outline-job', projectId, kind: 'outline', status: 'pending' })),
+      queuePages: vi.fn(async (_userId, projectId, pageIds) => pageIds.map((pageId) => ({ id: `job-${pageId}`, projectId, pageId }))),
+      queueRefresh: vi.fn(),
+      exportProject: vi.fn(),
+    }
+    const apiUrl = await serveApp({ wikiService })
+    const owner = await registerSession(apiUrl, 'wiki-queue@example.com')
+    const project = await fetch(`${apiUrl}/api/wikis`, {
+      method: 'POST',
+      headers: authHeaders(owner.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ title: 'Mine Wiki', topic: 'Grounded knowledge', scope: {} }),
+    }).then((response) => response.json()).then((body) => body.project)
+    const page = await fetch(`${apiUrl}/api/wikis/${project.id}/pages`, {
+      method: 'POST',
+      headers: authHeaders(owner.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ title: 'Overview', summary: '' }),
+    }).then((response) => response.json()).then((body) => body.page)
+
+    const outline = await fetch(`${apiUrl}/api/wikis/${project.id}/outline`, { method: 'POST', headers: authHeaders(owner.cookie) })
+    const generated = await fetch(`${apiUrl}/api/wikis/${project.id}/pages/generate`, {
+      method: 'POST',
+      headers: authHeaders(owner.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ pageIds: [page.id] }),
+    })
+    expect(outline.status).toBe(202)
+    expect(generated.status).toBe(202)
+    expect(wikiService.queueOutline).toHaveBeenCalledWith(owner.user.id, project.id)
+    expect(wikiService.queuePages).toHaveBeenCalledWith(owner.user.id, project.id, [page.id])
+  })
+})
+
+describe('governance api', () => {
+  it('requires authentication and completes a user-isolated review flow', async () => {
+    const apiUrl = await serveApp()
+    expect((await fetch(`${apiUrl}/api/governance/candidates`)).status).toBe(401)
+
+    const owner = await registerSession(apiUrl, 'governance-owner@example.com')
+    const other = await registerSession(apiUrl, 'governance-other@example.com')
+    const content = 'A practical guide to retrieval augmented generation with source citations.'
+    for (const [title, tag] of [['Guide', 'LLM'], ['Guide copy', 'llm']]) {
+      await fetch(`${apiUrl}/api/notes`, {
+        method: 'POST',
+        headers: authHeaders(owner.cookie, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ title, content, tags: [tag], summary: '', topic: 'AI', source: '', relatedNoteIds: [] }),
+      })
+    }
+
+    const candidates = await fetch(`${apiUrl}/api/governance/candidates`, { headers: authHeaders(owner.cookie) }).then((response) => response.json())
+    expect(candidates.duplicates).toHaveLength(1)
+    expect(candidates.tags).toHaveLength(1)
+
+    const crossUser = await fetch(`${apiUrl}/api/governance/duplicates/link`, {
+      method: 'POST',
+      headers: authHeaders(other.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ fingerprint: candidates.duplicates[0].fingerprint }),
+    })
+    expect(crossUser.status).toBe(409)
+
+    const linked = await fetch(`${apiUrl}/api/governance/duplicates/link`, {
+      method: 'POST',
+      headers: authHeaders(owner.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ fingerprint: candidates.duplicates[0].fingerprint }),
+    }).then((response) => response.json())
+    expect(linked.notes).toHaveLength(2)
+
+    const applied = await fetch(`${apiUrl}/api/governance/tags/apply`, {
+      method: 'POST',
+      headers: authHeaders(owner.cookie, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ fingerprint: candidates.tags[0].fingerprint, canonicalTag: 'Language Models' }),
+    }).then((response) => response.json())
+    expect(applied.notes.every((note) => note.tags.includes('Language Models'))).toBe(true)
+  })
+})
+
 describe('production client hosting', () => {
   it('serves the built client without swallowing api 404 responses', async () => {
     const staticDir = await mkdtemp(join(tmpdir(), 'mine-client-'))

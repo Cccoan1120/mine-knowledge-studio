@@ -35,6 +35,17 @@ function indexedChunk(content = storedNote.content) {
 }
 
 describe('Prisma indexing store', () => {
+  it('updates only submitted fields and applies the caller version condition', async () => {
+    const update = vi.fn(async ({ data }) => ({ ...storedNote, ...data }))
+    const transaction = { note: { findFirst: vi.fn(async () => storedNote), update } }
+    const store = createPrismaStore({ prisma: { $transaction: async callback => callback(transaction) } })
+    await store.updateNote('user-1', 'note-1', { title: 'New title', expectedUpdatedAt: storedNote.updatedAt.toISOString() })
+    expect(update.mock.calls[0][0]).toMatchObject({ where: { id: 'note-1', userId: 'user-1', updatedAt: storedNote.updatedAt }, data: { title: 'New title' } })
+    expect(Object.keys(update.mock.calls[0][0].data).sort()).toEqual(['title', 'updatedAt'])
+    update.mockRejectedValueOnce(Object.assign(new Error('missing version'), { code: 'P2025' }))
+    await expect(store.updateNote('user-1', 'note-1', { title: 'Stale', expectedUpdatedAt: storedNote.updatedAt.toISOString() })).rejects.toMatchObject({ status: 409 })
+  })
+
   it('queues a pending index job in the same transaction that creates a note', async () => {
     const transaction = {
       note: { create: vi.fn(async () => storedNote) },

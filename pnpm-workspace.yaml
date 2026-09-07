@@ -3,3 +3,4 @@ allowBuilds:
   prisma: true
 overrides:
   '@hono/node-server': 1.19.13
+  qs: 6.16.0

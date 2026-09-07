@@ -16,7 +16,8 @@ export async function login(email: string, password: string): Promise<CurrentUse
 }
 
 export async function logout() {
-  await fetch('/api/auth/logout', { method: 'POST' })
+  const response = await fetch('/api/auth/logout', { method: 'POST' })
+  if (!response.ok) throw new Error('退出失败，请重试。')
 }
 
 async function authRequest(endpoint: string, email: string, password: string) {

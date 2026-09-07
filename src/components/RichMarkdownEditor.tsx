@@ -1,5 +1,7 @@
 import {
   Bold,
+  Eye,
+  Pencil,
   Heading1,
   Italic,
   Link,
@@ -10,24 +12,29 @@ import {
   Redo2,
   Undo2,
 } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 type RichMarkdownEditorProps = {
   markdown: string
   onChange: (markdown: string) => void
   focusText?: string
   focusToken?: number
+  allowPreview?: boolean
 }
 
 type FormatAction = 'h1' | 'bold' | 'italic' | 'quote' | 'bullet' | 'number' | 'link' | 'rule'
 
-export function RichMarkdownEditor({ markdown, onChange, focusText = '', focusToken }: RichMarkdownEditorProps) {
+export function RichMarkdownEditor({ markdown, onChange, focusText = '', focusToken, allowPreview = true }: RichMarkdownEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [preview, setPreview] = useState(false)
 
   useEffect(() => {
     if (!focusText) return
     const index = markdown.indexOf(focusText)
     if (index < 0) return
+    setPreview(false)
     focusAndSelect(index, index + focusText.length)
   }, [focusText, focusToken, markdown])
 
@@ -100,14 +107,8 @@ export function RichMarkdownEditor({ markdown, onChange, focusText = '', focusTo
 
   return (
     <section className="document-editor">
-      <div className="editor-mode-bar">
-        <div>
-          <strong>正文</strong>
-          <span>直接写作，工具栏会插入 Markdown 格式，内容自动保存。</span>
-        </div>
-      </div>
-
       <div className="markdown-toolbar" aria-label="正文格式工具">
+        {!preview ? <>
         <button type="button" onClick={() => runNativeEdit('undo')} aria-label="撤销" title="撤销">
           <Undo2 size={16} />
         </button>
@@ -139,16 +140,19 @@ export function RichMarkdownEditor({ markdown, onChange, focusText = '', focusTo
         <button type="button" onClick={() => applyFormat('rule')} aria-label="分割线" title="分割线">
           <Minus size={16} />
         </button>
+        </> : <span className="preview-mode-label">阅读视图</span>}
+        {allowPreview ? <button type="button" className="editor-preview-toggle" onClick={() => setPreview(value => !value)} aria-label={preview ? '返回编辑' : '预览正文'} title={preview ? '返回编辑' : '预览正文'} aria-pressed={preview}>{preview ? <Pencil size={16} /> : <Eye size={16} />}</button> : null}
       </div>
 
-      <textarea
+      {preview ? <div className="document-preview"><ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown || '暂无正文'}</ReactMarkdown></div> : <textarea
         ref={textareaRef}
         className="source-editor"
+        aria-label="正文"
         value={markdown}
         onChange={(event) => onChange(event.target.value)}
         placeholder="直接输入正文，或粘贴资料、字幕、访谈、研究摘录。"
         spellCheck={false}
-      />
+      />}
     </section>
   )
 }

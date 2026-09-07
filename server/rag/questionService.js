@@ -1,9 +1,7 @@
 import { answerQuestion } from '../ai/service.js'
 import { buildChatCompletionRequest } from '../ai/chatCompletionRequest.js'
-import { selectContext } from './context.js'
 import { buildFallbackQuery } from './fallbackQuery.js'
-import { fuseRankings } from './rrf.js'
-import { buildSearchTokens } from './searchTokens.js'
+import { createKnowledgeRetriever } from './retriever.js'
 
 export function createRagQuestionService({
   store,
@@ -14,53 +12,18 @@ export function createRagQuestionService({
   logger,
   clock = () => Date.now(),
 }) {
+  const retriever = createKnowledgeRetriever({ store, embeddingClient, embeddingEnabled, logger, clock })
   return {
     async ask({ userId, question, history = [], scope }) {
       if (store.storageMode !== 'postgres') {
         return answerBasic({ store, legacyAnswer, logger, clock, userId, question, scope })
       }
 
-      const retrievalStartedAt = clock()
       const standaloneQuestion = await rewriteQuestion({ chatClient, question, history })
-      const searchTokens = buildSearchTokens(standaloneQuestion)
-      const queryEmbedding = embeddingEnabled
-        ? await embedQuery(embeddingClient, standaloneQuestion)
-        : undefined
-      let dense
-      let keyword
-      try {
-        ({ dense, keyword } = await store.retrieveKnowledgeCandidates({
-          userId,
-          searchTokens,
-          queryEmbedding,
-          scope,
-          denseLimit: 30,
-          keywordLimit: 30,
-        }))
-      } catch (error) {
-        emitMetric(logger, {
-          event: 'knowledge_retrieval',
-          outcome: 'failed',
-          durationMs: elapsedMs(clock, retrievalStartedAt),
-          retrievalMode: retrievalModeFor(queryEmbedding, searchTokens),
-          denseCandidateCount: 0,
-          keywordCandidateCount: 0,
-          contextCount: 0,
-          failureCategory: 'retrieval_failed',
-        })
-        throw error
-      }
-      const selected = selectContext(fuseRankings(dense, keyword))
-      const retrievalMode = retrievalModeFor(queryEmbedding, searchTokens)
-      emitMetric(logger, {
-        event: 'knowledge_retrieval',
-        outcome: 'success',
-        durationMs: elapsedMs(clock, retrievalStartedAt),
-        retrievalMode,
-        denseCandidateCount: dense.length,
-        keywordCandidateCount: keyword.length,
-        contextCount: selected.length,
-        failureCategory: null,
+      const { chunks: selected, retrievalMode } = await retriever.retrieve({
+        userId,
+        query: standaloneQuestion,
+        scope,
       })
 
       if (!selected.length || !chatClient) {
@@ -236,16 +199,6 @@ async function rewriteQuestion({ chatClient, question, history }) {
   }
 }
 
-async function embedQuery(embeddingClient, standaloneQuestion) {
-  if (!embeddingClient) return undefined
-  try {
-    const [embedding] = await embeddingClient.embed([standaloneQuestion])
-    return Array.isArray(embedding) && embedding.length === 1536 ? embedding : undefined
-  } catch {
-    return undefined
-  }
-}
-
 function answerMessages(question, history, chunks) {
   return [
     {
@@ -357,11 +310,6 @@ function trustedCitation(chunk, quote) {
 
 function unique(values) {
   return [...new Set(values)]
-}
-
-function retrievalModeFor(queryEmbedding, searchTokens) {
-  if (queryEmbedding) return searchTokens ? 'hybrid' : 'dense'
-  return 'keyword'
 }
 
 function emitMetric(logger, payload) {

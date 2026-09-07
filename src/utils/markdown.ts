@@ -24,7 +24,7 @@ export function parseMarkdownToNote(markdown: string, source = '本地导入'): 
   const content = markdown.replace(frontMatterPattern, '').trim()
 
   return {
-    id: createId('md'),
+    id: metadata.id || createId('md'),
     title: metadata.title ?? extractTitle(content),
     content,
     summary: metadata.summary ?? '',
@@ -40,6 +40,7 @@ export function parseMarkdownToNote(markdown: string, source = '本地导入'): 
 export function serializeNoteToMarkdown(note: Note) {
   const frontMatter = [
     '---',
+    `id: ${escapeYaml(note.id)}`,
     `title: ${escapeYaml(note.title)}`,
     `summary: ${escapeYaml(note.summary)}`,
     `tags: [${note.tags.map(escapeYaml).join(', ')}]`,
@@ -67,6 +68,7 @@ function parseFrontMatter(markdown: string) {
   )
 
   return {
+    id: cleanScalar(fields.id),
     title: cleanScalar(fields.title),
     summary: cleanScalar(fields.summary),
     topic: cleanScalar(fields.topic),

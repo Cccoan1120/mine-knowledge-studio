@@ -9,10 +9,12 @@ import { getAICapabilities, getEmbeddingConfig, getPlatformAIConfig } from './ai
 import { createEmbeddingClient } from './ai/embeddingClient.js'
 import { analyzeNote, generateOutput } from './ai/service.js'
 import { extractFromUrl, extractImage, extractMedia, getImportCapabilities } from './import/extractors.js'
+import { createGovernanceService } from './governance/service.js'
 import { aiRateLimit, authRateLimit, importRateLimit, indexControlRateLimit, logServerError, publicError, requestContext, requireSameOrigin } from './security.js'
 import { createPlatformChatClient, createRagQuestionService } from './rag/questionService.js'
 import { createDefaultStore } from './store/index.js'
-import { assertUpload, validateAskRequest, validateBulkNotes, validateImportUrl, validateNoteIds, validateNoteInput, validateOutputType } from './validation.js'
+import { assertUpload, validateAskRequest, validateBulkNotes, validateGovernanceAction, validateGovernanceDismissal, validateImportUrl, validateNoteIds, validateNoteInput, validateOutputType, validateWikiPageIds, validateWikiPageInput, validateWikiProjectInput } from './validation.js'
+import { createWikiService } from './wiki/service.js'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const projectRoot = resolve(currentDir, '..')
@@ -30,6 +32,11 @@ export function createImportApp(options = {}) {
   const store = options.store || createDefaultStore()
   const logger = options.logger || console
   const questionService = options.questionService || createDefaultQuestionService(store, logger)
+  const governanceService = options.governanceService || createGovernanceService({ store })
+  const wikiService = options.wikiService || createWikiService({
+    store,
+    chatConfigured: Boolean(getPlatformAIConfig().apiKey),
+  })
 
   app.set('trust proxy', 1)
   app.disable('x-powered-by')
@@ -106,6 +113,116 @@ export function createImportApp(options = {}) {
     const deleted = await store.deleteNote(request.user.id, request.params.id)
     if (!deleted) return response.status(404).json({ error: '素材不存在。' })
     return response.json({ ok: true })
+  })
+
+  app.use('/api/governance', requireAuth)
+
+  app.get('/api/governance/candidates', async (request, response) => {
+    response.json(await governanceService.list(request.user.id))
+  })
+
+  app.post('/api/governance/dismiss', async (request, response) => {
+    response.json(await governanceService.dismiss(request.user.id, validateGovernanceDismissal(request.body)))
+  })
+
+  app.post('/api/governance/duplicates/link', async (request, response) => {
+    response.json(await governanceService.linkDuplicate(request.user.id, validateGovernanceAction(request.body)))
+  })
+
+  app.post('/api/governance/tags/apply', async (request, response) => {
+    response.json(await governanceService.applyTagCandidate(request.user.id, validateGovernanceAction(request.body, { tag: true })))
+  })
+
+  app.use('/api/wikis', requireAuth)
+
+  app.get('/api/wikis', async (request, response) => {
+    response.json({ projects: await store.listWikiProjects(request.user.id) })
+  })
+
+  app.post('/api/wikis', async (request, response) => {
+    response.status(201).json({ project: await store.createWikiProject(request.user.id, validateWikiProjectInput(request.body)) })
+  })
+
+  app.get('/api/wikis/:wikiId', async (request, response) => {
+    const project = await store.getWikiProject(request.user.id, request.params.wikiId)
+    if (!project) return response.status(404).json({ error: 'Wiki 不存在。' })
+    return response.json({ project })
+  })
+
+  app.patch('/api/wikis/:wikiId', async (request, response) => {
+    const project = await store.updateWikiProject(request.user.id, request.params.wikiId, validateWikiProjectInput(request.body, { partial: true }))
+    if (!project) return response.status(404).json({ error: 'Wiki 不存在。' })
+    return response.json({ project })
+  })
+
+  app.delete('/api/wikis/:wikiId', async (request, response) => {
+    const deleted = await store.deleteWikiProject(request.user.id, request.params.wikiId)
+    if (!deleted) return response.status(404).json({ error: 'Wiki 不存在。' })
+    return response.json({ ok: true })
+  })
+
+  app.post('/api/wikis/:wikiId/outline', aiRateLimit, async (request, response) => {
+    const job = await wikiService.queueOutline(request.user.id, request.params.wikiId)
+    if (!job) return response.status(404).json({ error: 'Wiki 不存在。' })
+    return response.status(202).json({ job })
+  })
+
+  app.post('/api/wikis/:wikiId/pages', async (request, response) => {
+    const project = await store.getWikiProject(request.user.id, request.params.wikiId)
+    if (!project) return response.status(404).json({ error: 'Wiki 不存在。' })
+    if (project.pages.length >= 20) return response.status(409).json({ error: '一个 Wiki 最多包含 20 个页面。' })
+    const page = await store.createWikiPage(request.user.id, request.params.wikiId, validateWikiPageInput(request.body))
+    return response.status(201).json({ page })
+  })
+
+  app.patch('/api/wikis/:wikiId/pages/:pageId', async (request, response) => {
+    const page = await store.updateWikiPage(request.user.id, request.params.wikiId, request.params.pageId, validateWikiPageInput(request.body, { partial: true }))
+    if (!page) return response.status(404).json({ error: 'Wiki 页面不存在。' })
+    return response.json({ page })
+  })
+
+  app.delete('/api/wikis/:wikiId/pages/:pageId', async (request, response) => {
+    const deleted = await store.deleteWikiPage(request.user.id, request.params.wikiId, request.params.pageId)
+    if (!deleted) return response.status(404).json({ error: 'Wiki 页面不存在。' })
+    return response.json({ ok: true })
+  })
+
+  app.post('/api/wikis/:wikiId/pages/generate', aiRateLimit, async (request, response) => {
+    const jobs = await wikiService.queuePages(request.user.id, request.params.wikiId, validateWikiPageIds(request.body?.pageIds))
+    if (!jobs) return response.status(404).json({ error: 'Wiki 不存在。' })
+    return response.status(202).json({ jobs })
+  })
+
+  app.post('/api/wikis/:wikiId/pages/:pageId/refresh', aiRateLimit, async (request, response) => {
+    const job = await wikiService.queueRefresh(request.user.id, request.params.wikiId, request.params.pageId)
+    if (!job) return response.status(404).json({ error: 'Wiki 页面不存在。' })
+    return response.status(202).json({ job })
+  })
+
+  app.post('/api/wikis/:wikiId/pages/:pageId/candidate/accept', async (request, response) => {
+    const page = await store.acceptWikiCandidate(request.user.id, request.params.wikiId, request.params.pageId)
+    if (!page) return response.status(404).json({ error: '没有可接受的候选版本。' })
+    return response.json({ page })
+  })
+
+  app.post('/api/wikis/:wikiId/pages/:pageId/candidate/discard', async (request, response) => {
+    const page = await store.discardWikiCandidate(request.user.id, request.params.wikiId, request.params.pageId)
+    if (!page) return response.status(404).json({ error: 'Wiki 页面不存在。' })
+    return response.json({ page })
+  })
+
+  app.get('/api/wikis/:wikiId/export', async (request, response) => {
+    const markdown = await wikiService.exportProject(request.user.id, request.params.wikiId)
+    if (markdown === null) return response.status(404).json({ error: 'Wiki 不存在。' })
+    response.type('text/markdown; charset=utf-8')
+    return response.send(markdown)
+  })
+
+  app.get('/api/wikis/:wikiId/pages/:pageId/export', async (request, response) => {
+    const markdown = await wikiService.exportPage(request.user.id, request.params.wikiId, request.params.pageId)
+    if (markdown === null) return response.status(404).json({ error: 'Wiki 页面不存在。' })
+    response.type('text/markdown; charset=utf-8')
+    return response.send(markdown)
   })
 
   app.use('/api/ai', requireAuth)

@@ -16,6 +16,7 @@ function runtimeHarness({
   storageMode,
   embeddingConfigured,
   embeddingEnabled = true,
+  chatConfigured = false,
   closeImmediately = true,
 }) {
   const server = fakeServer({ closeImmediately })
@@ -24,10 +25,12 @@ function runtimeHarness({
     return server
   }) }
   const worker = { start: vi.fn(), stop: vi.fn() }
+  const wikiWorker = { start: vi.fn(), stop: vi.fn() }
   const processRef = new EventEmitter()
   const store = { storageMode }
   const appFactory = vi.fn(() => app)
   const workerFactory = vi.fn(() => worker)
+  const wikiWorkerFactory = vi.fn(() => wikiWorker)
   const result = startRuntime({
     store,
     appFactory,
@@ -37,12 +40,15 @@ function runtimeHarness({
       apiKey: embeddingConfigured ? 'configured' : '',
     },
     embeddingClient: { embed: vi.fn() },
+    chatConfig: { apiKey: chatConfigured ? 'configured' : '', baseUrl: 'https://example.test/v1', model: 'test-model' },
+    chatClient: { completeJSON: vi.fn() },
+    wikiWorkerFactory,
     processRef,
     logger: { log: vi.fn(), error: vi.fn() },
     port: 8787,
     host: '127.0.0.1',
   })
-  return { ...result, app, appFactory, createdWorker: worker, processRef, store, workerFactory }
+  return { ...result, app, appFactory, createdWorker: worker, createdWikiWorker: wikiWorker, processRef, store, workerFactory, wikiWorkerFactory }
 }
 
 describe('server runtime indexing worker lifecycle', () => {
@@ -100,5 +106,14 @@ describe('server runtime indexing worker lifecycle', () => {
 
     harness.server.emit('close')
     expect(harness.worker.stop).toHaveBeenCalledOnce()
+  })
+
+  it('starts the Wiki worker with configured chat in memory mode and stops it with the server', () => {
+    const harness = runtimeHarness({ storageMode: 'memory', embeddingConfigured: false, chatConfigured: true })
+
+    expect(harness.wikiWorker.start).toHaveBeenCalledOnce()
+    expect(harness.wikiWorkerFactory).toHaveBeenCalledWith(expect.objectContaining({ store: harness.store }))
+    harness.server.emit('close')
+    expect(harness.wikiWorker.stop).toHaveBeenCalledOnce()
   })
 })

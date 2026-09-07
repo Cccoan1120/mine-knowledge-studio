@@ -38,6 +38,8 @@ Start command: pnpm start
 Health check path: /api/health
 ```
 
+`pnpm start` validates production settings, runs `prisma migrate deploy` against the configured database, and only then starts the application. A failed or timed-out migration stops the new process. This applies pending Wiki and governance migrations before their routes or workers become available. Development via `pnpm dev` does not run deployment migrations.
+
 ### Docker runtime for media imports
 
 The repository also includes a production `Dockerfile` with Node 24, ffmpeg, and a pinned public-media parser. After the GitHub Docker CI job passes, the existing Render service can be switched to Docker runtime without changing its service name, URL, Neon database, or environment variables.

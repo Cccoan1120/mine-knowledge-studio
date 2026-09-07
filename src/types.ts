@@ -150,3 +150,111 @@ export type ImportResult = {
   warnings: string[]
   diagnostics?: ImportDiagnostics
 }
+
+export type GovernanceNoteSummary = {
+  id: string
+  title: string
+  excerpt: string
+  tags: string[]
+  updatedAt: string
+}
+
+export type DuplicateCandidate = {
+  fingerprint: string
+  noteIds: [string, string]
+  notes: [GovernanceNoteSummary, GovernanceNoteSummary]
+  score: number
+  reason: 'exact-content' | 'same-title' | 'similar-content'
+}
+
+export type TagGovernanceCandidate = {
+  fingerprint: string
+  variants: Array<{ tag: string; count: number; noteIds: string[] }>
+  canonicalTag: string
+  affectedNoteCount: number
+  reason: 'format-variant' | 'similar-spelling'
+}
+
+export type GovernanceCandidates = {
+  duplicates: DuplicateCandidate[]
+  tags: TagGovernanceCandidate[]
+  stats: { noteCount: number; tagCount: number }
+}
+
+export type WikiScope = {
+  noteIds: string[]
+  topics: string[]
+  tags: string[]
+}
+
+export type WikiProjectStatus = 'draft' | 'outlining' | 'outline-ready' | 'generating' | 'partial-failure' | 'ready'
+export type WikiPageStatus = 'planned' | 'queued' | 'generating' | 'ready' | 'failed'
+export type WikiJobStatus = 'pending' | 'processing' | 'succeeded' | 'failed' | 'accepted' | 'discarded'
+
+export type WikiProjectSummary = {
+  id: string
+  title: string
+  topic: string
+  status: WikiProjectStatus
+  pageCount: number
+  readyPageCount: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type WikiCitation = {
+  id: string
+  chunkId: string
+  noteId: string | null
+  noteTitle: string
+  quote: string
+  sourceUrl: string
+  sourceUpdatedAt: string | null
+  sourceMissing: boolean
+}
+
+export type WikiCandidate = {
+  content: string
+  citations: WikiCitation[]
+  linkedPageIds: string[]
+}
+
+export type WikiPage = {
+  id: string
+  projectId: string
+  title: string
+  slug: string
+  summary: string
+  content: string
+  position: number
+  status: WikiPageStatus
+  lastError: string | null
+  generatedAt: string | null
+  createdAt: string
+  updatedAt: string
+  citations: WikiCitation[]
+  linkedPageIds: string[]
+  backlinkPageIds: string[]
+  stale: boolean
+  sourceMissing: boolean
+  hasCandidate: boolean
+  candidateData: WikiCandidate | null
+}
+
+export type WikiJob = {
+  id: string
+  projectId: string
+  pageId: string | null
+  kind: 'outline' | 'page' | 'refresh'
+  status: WikiJobStatus
+  attempts: number
+  lastError: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type WikiProject = WikiProjectSummary & {
+  scope: WikiScope
+  pages: WikiPage[]
+  jobs: WikiJob[]
+}

@@ -18,7 +18,7 @@ export async function createNote(input: Partial<Note>): Promise<Note> {
   return data.note
 }
 
-export async function updateNote(id: string, patch: Partial<Note>): Promise<Note> {
+export async function updateNote(id: string, patch: Partial<Note> & { expectedUpdatedAt?: string }): Promise<Note> {
   const response = await fetch(`/api/notes/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

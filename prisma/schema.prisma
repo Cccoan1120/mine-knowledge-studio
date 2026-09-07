@@ -15,6 +15,9 @@ model User {
   notes              Note[]
   knowledgeChunks    KnowledgeChunk[]
   knowledgeIndexJobs KnowledgeIndexJob[]
+  wikiProjects       WikiProject[]
+  wikiGenerationJobs WikiGenerationJob[]
+  governanceDismissals GovernanceDismissal[]
 }
 
 model Note {
@@ -32,6 +35,7 @@ model Note {
   user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   knowledgeChunks   KnowledgeChunk[]
   knowledgeIndexJob KnowledgeIndexJob?
+  wikiCitations     WikiCitation[]
 
   @@index([userId, updatedAt])
 }
@@ -83,6 +87,134 @@ model KnowledgeIndexJob {
   note        Note                 @relation(fields: [noteId], references: [id], onDelete: Cascade)
 
   @@index([userId, status])
+  @@index([status, availableAt])
+  @@index([status, lockedAt])
+}
+
+model GovernanceDismissal {
+  id          String   @id @default(cuid())
+  userId      String
+  kind        String
+  fingerprint String
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind, fingerprint])
+  @@index([userId, kind])
+}
+
+enum WikiPageStatus {
+  planned
+  queued
+  generating
+  ready
+  failed
+}
+
+enum WikiJobKind {
+  outline
+  page
+  refresh
+}
+
+enum WikiJobStatus {
+  pending
+  processing
+  succeeded
+  failed
+  accepted
+  discarded
+}
+
+model WikiProject {
+  id             String              @id @default(cuid())
+  userId         String
+  title          String
+  topic          String
+  scope          Json
+  scopeUpdatedAt DateTime            @default(now())
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pages          WikiPage[]
+  jobs           WikiGenerationJob[]
+
+  @@index([userId, updatedAt])
+}
+
+model WikiPage {
+  id            String              @id @default(cuid())
+  projectId     String
+  title         String
+  slug          String
+  summary       String              @default("")
+  content       String              @default("")
+  position      Int
+  status        WikiPageStatus      @default(planned)
+  lastError     String?
+  generatedAt   DateTime?
+  candidateData Json?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  project       WikiProject         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  citations     WikiCitation[]
+  outgoingLinks WikiPageLink[]      @relation("WikiLinkFrom")
+  incomingLinks WikiPageLink[]      @relation("WikiLinkTo")
+  jobs          WikiGenerationJob[]
+
+  @@unique([projectId, slug])
+  @@index([projectId, position])
+}
+
+model WikiCitation {
+  id              String    @id @default(cuid())
+  pageId          String
+  noteId          String?
+  chunkId         String
+  noteTitle       String
+  quote           String
+  sourceUrl       String    @default("")
+  sourceUpdatedAt DateTime?
+  createdAt       DateTime  @default(now())
+  page            WikiPage  @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  note            Note?     @relation(fields: [noteId], references: [id], onDelete: SetNull)
+
+  @@index([pageId])
+  @@index([noteId])
+}
+
+model WikiPageLink {
+  fromPageId String
+  toPageId   String
+  createdAt  DateTime @default(now())
+  fromPage   WikiPage @relation("WikiLinkFrom", fields: [fromPageId], references: [id], onDelete: Cascade)
+  toPage     WikiPage @relation("WikiLinkTo", fields: [toPageId], references: [id], onDelete: Cascade)
+
+  @@id([fromPageId, toPageId])
+  @@index([toPageId])
+}
+
+model WikiGenerationJob {
+  id          String        @id @default(cuid())
+  userId      String
+  projectId   String
+  pageId      String?
+  kind        WikiJobKind
+  status      WikiJobStatus @default(pending)
+  attempts    Int           @default(0)
+  availableAt DateTime      @default(now())
+  lockedAt    DateTime?
+  leaseToken  String?       @unique
+  lastError   String?
+  result      Json?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project     WikiProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  page        WikiPage?     @relation(fields: [pageId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@index([projectId, status])
   @@index([status, availableAt])
   @@index([status, lockedAt])
 }

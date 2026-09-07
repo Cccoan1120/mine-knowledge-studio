@@ -1,12 +1,14 @@
-import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react'
 import {
-  ChevronDown,
+  BookOpen,
   Download,
+  Ellipsis,
   ExternalLink,
   FileDown,
   FilePenLine,
   FilePlus2,
   FolderOpen,
+  Library,
   Network,
   PanelLeftClose,
   PanelLeftOpen,
@@ -20,10 +22,13 @@ import {
   X,
 } from 'lucide-react'
 import './App.css'
+import './workspace-theme.css'
 import { analyzeNote, answerQuestion, ensureIndex, generateOutput, getIndexStatus, getPlatformAICapabilities, retryIndex, type PlatformAICapabilities } from './services/aiService'
 import { getCurrentUser, login, logout, register } from './services/authService'
 import { bulkImportNotes, createNote as createCloudNote, deleteNote as deleteCloudNote, listNotes, updateNote as updateCloudNote } from './services/noteService'
 import { loadLocalNotesForMigration, markLocalNotesMigrated } from './services/storage'
+import { WikiWorkspace } from './components/WikiWorkspace'
+import { createSaveQueue, type SaveStatus } from './services/saveQueue'
 import type { AnswerResult, AskHistoryItem, AskScopeMode, Citation, CurrentUser, GeneratedResult, ImportResult, IndexStatus, Note, OutputType } from './types'
 import { askScopeReady, buildAskScope } from './utils/askScope'
 import { extractTitle, parseMarkdownToNote, serializeNoteToMarkdown } from './utils/markdown'
@@ -60,11 +65,15 @@ const AssistantPanel = lazy(() =>
 const ImportPanel = lazy(() =>
   import('./components/ImportPanel').then((module) => ({ default: module.ImportPanel })),
 )
+const GovernancePanel = lazy(() =>
+  import('./components/GovernancePanel').then((module) => ({ default: module.GovernancePanel })),
+)
 const RichMarkdownEditor = lazy(() =>
   import('./components/RichMarkdownEditor').then((module) => ({ default: module.RichMarkdownEditor })),
 )
 
 function App() {
+  const [activeWorkspace, setActiveWorkspace] = useState<'library' | 'wiki'>('library')
   const [user, setUser] = useState<CurrentUser | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login')
@@ -89,7 +98,7 @@ function App() {
   const [focusRequest, setFocusRequest] = useState<{ noteId: string; quote: string; token: number } | null>(null)
   const [busy, setBusy] = useState('')
   const [status, setStatus] = useState('请登录后开始使用你的专属素材库。')
-  const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving' | 'error'>('saved')
+  const [saveStates, setSaveStates] = useState<Record<string, SaveStatus>>({})
   const [lastSavedAt, setLastSavedAt] = useState('')
   const [aiCapabilities, setAiCapabilities] = useState<PlatformAICapabilities | null>(null)
   const [indexStatus, setIndexStatus] = useState<IndexStatus | null>(null)
@@ -97,9 +106,10 @@ function App() {
   const [indexPollingCycle, setIndexPollingCycle] = useState(0)
   const [showSettings, setShowSettings] = useState(false)
   const [showImportPanel, setShowImportPanel] = useState(false)
+  const [showGovernancePanel, setShowGovernancePanel] = useState(false)
   const [localMigrationNotes, setLocalMigrationNotes] = useState<Note[]>([])
-  const [showLibrary, setShowLibrary] = useState(() => localStorage.getItem(libraryVisibleKey) !== 'false')
-  const [showAssistant, setShowAssistant] = useState(() => localStorage.getItem(assistantVisibleKey) !== 'false')
+  const [showLibrary, setShowLibrary] = useState(() => window.innerWidth > 760 && localStorage.getItem(libraryVisibleKey) !== 'false')
+  const [showAssistant, setShowAssistant] = useState(() => window.innerWidth > 1100 && localStorage.getItem(assistantVisibleKey) !== 'false')
   const [showGraph, setShowGraph] = useState(false)
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const [activeAssistantTab, setActiveAssistantTab] = useState<'organize' | 'ask' | 'output'>('organize')
@@ -108,12 +118,35 @@ function App() {
     return Number.isFinite(saved) ? Math.min(520, Math.max(320, saved)) : 320
   })
   const [vaultHandle, setVaultHandle] = useState<DirectoryHandle | null>(null)
+  const vaultFileNames = useRef(new Map<string, string>())
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const saveVersionRef = useRef(0)
-  const autosaveTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
-  const pendingSaveRef = useRef<Record<string, Partial<Note>>>({})
+  const [saveQueue] = useState(() => createSaveQueue<Partial<Note>, Note>({
+    save: (id, patch, expectedUpdatedAt) => updateCloudNote(id, { ...patch, expectedUpdatedAt }),
+    onChange: (id, state, error) => {
+      setSaveStates(current => ({ ...current, [id]: state }))
+      if (error) setStatus(`${error.message} 草稿已保留，可重试保存或导出。`)
+      else if (state === 'saved') setStatus('素材已保存。')
+    },
+    onSaved: (id, saved, pending, submitted) => {
+      setNotes(current => current.map(note => note.id === id ? { ...note, ...saved, ...pending } : note))
+      setLastSavedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+      if ('content' in submitted) setIndexPollingCycle(current => current + 1)
+    },
+  }))
 
   const selectedNote = notes.find((note) => note.id === selectedId) ?? notes[0]
+  const saveState = saveStates[selectedNote?.id || ''] || 'saved'
+  const refreshNotes = useCallback(async () => {
+    const cloudNotes = await listNotes()
+    for (const note of cloudNotes) saveQueue.seed(note.id, note.updatedAt)
+    setNotes(cloudNotes)
+    setSelectedId(current => cloudNotes.some(note => note.id === current) ? current : cloudNotes[0]?.id ?? '')
+    setStatus(cloudNotes.length ? `已加载 ${cloudNotes.length} 条云端素材。` : '你的云端素材库还是空的，可以新建或导入第一条素材。')
+    setLibraryLoaded(true)
+  }, [saveQueue])
+  const refreshAICapabilities = useCallback(async () => {
+    setAiCapabilities(await getPlatformAICapabilities())
+  }, [])
   const tags = useMemo(
     () => ['全部标签', ...Array.from(new Set(notes.flatMap((note) => note.tags))).sort((a, b) => a.localeCompare(b))],
     [notes],
@@ -135,12 +168,13 @@ function App() {
       .then((currentUser) => {
         setUser(currentUser)
         if (!currentUser) return
-        void refreshNotes()
-        void refreshAICapabilities()
+        void refreshNotes().catch(error => setStatus(error.message))
+        void refreshAICapabilities().catch(error => setStatus(error.message))
         setLocalMigrationNotes(loadLocalNotesForMigration())
       })
+      .catch(() => setAuthError('登录状态暂时无法读取，请重试登录。'))
       .finally(() => setAuthLoading(false))
-  }, [])
+  }, [refreshNotes, refreshAICapabilities])
   useEffect(() => {
     if (!user || !libraryLoaded) return
 
@@ -190,6 +224,19 @@ function App() {
   useEffect(() => localStorage.setItem(assistantVisibleKey, String(showAssistant)), [showAssistant])
   useEffect(() => localStorage.setItem(libraryVisibleKey, String(showLibrary)), [showLibrary])
   useEffect(() => {
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!saveQueue.hasUnsaved()) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', beforeUnload)
+    const resize = () => {
+      if (window.innerWidth <= 760) { setShowLibrary(false); setShowAssistant(false) }
+    }
+    window.addEventListener('resize', resize)
+    return () => { window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('resize', resize) }
+  }, [saveQueue])
+  useEffect(() => {
     if (!selectedNote) {
       setSelectedSourceIds([])
       return
@@ -210,10 +257,9 @@ function App() {
     setNotes((current) =>
       current.map((note) => (note.id === selectedNote.id ? { ...note, content: editorMarkdown, updatedAt } : note)),
     )
-    void updateCloudNote(selectedNote.id, { content: editorMarkdown, updatedAt })
-      .then(restartIndexStatusRefresh)
-      .catch(() => setStatus('云端保存失败，请稍后重试。'))
-  }, [selectedNote, editorMarkdown])
+    saveQueue.seed(selectedNote.id, selectedNote.updatedAt)
+    saveQueue.enqueue(selectedNote.id, { content: editorMarkdown })
+  }, [selectedNote, editorMarkdown, saveQueue])
 
   if (authLoading) {
     return <main className="auth-shell">正在检查登录状态...</main>
@@ -225,7 +271,7 @@ function App() {
         <section className="auth-panel" aria-label="Mine 登录注册">
           <div className="auth-copy">
             <div className="auth-brand">
-              <img className="brand-mark" src="/mine-logo.png" alt="" />
+              <img className="brand-mark" src="/mine-logo-small.png" alt="" />
               <div>
                 <strong>Mine</strong>
                 <span>素材工作室</span>
@@ -241,6 +287,7 @@ function App() {
             </div>
           </div>
           <form className="auth-form" onSubmit={submitAuth}>
+            <div className="auth-identity"><img src="/mine-logo-small.png" alt="" /><strong>Mine</strong></div>
             <header className="auth-form-header">
               <h2>{authMode === 'login' ? '欢迎回来' : '创建你的素材库'}</h2>
               <p>{authMode === 'login' ? '继续整理你的素材和想法。' : '从第一条值得留下的内容开始。'}</p>
@@ -270,7 +317,7 @@ function App() {
                 id="auth-password"
                 type="password"
                 value={authPassword}
-                placeholder={authMode === 'login' ? '输入密码' : '至少 8 位字符'}
+                placeholder={authMode === 'login' ? '输入密码' : '至少 8 个字符，最多 72 字节'}
                 autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
                 onChange={(event) => setAuthPassword(event.target.value)}
               />
@@ -283,18 +330,6 @@ function App() {
         </section>
       </main>
     )
-  }
-
-  async function refreshNotes() {
-    const cloudNotes = await listNotes()
-    setNotes(cloudNotes)
-    setSelectedId((current) => (cloudNotes.some((note) => note.id === current) ? current : cloudNotes[0]?.id ?? ''))
-    setStatus(cloudNotes.length ? `已加载 ${cloudNotes.length} 条云端素材。` : '你的云端素材库还是空的，可以新建或导入第一条素材。')
-    setLibraryLoaded(true)
-  }
-
-  async function refreshAICapabilities() {
-    setAiCapabilities(await getPlatformAICapabilities())
   }
 
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
@@ -320,12 +355,17 @@ function App() {
   }
 
   async function signOut() {
-    await logout()
+    if (!await saveQueue.flushAll()) return
+    try { await logout() } catch { setStatus('退出失败，请重试。'); return }
+    saveQueue.clear()
+    setSaveStates({})
     setUser(null)
     setNotes([])
     setSelectedId('')
     setAnswer(null)
     setConversation([])
+    setGeneratedResult(null)
+    setVaultHandle(null)
     setQuestion('')
     setAskScopeMode('library')
     setAskTopics([])
@@ -334,6 +374,7 @@ function App() {
     setIndexStatus(null)
     setLibraryLoaded(false)
     setIndexPollingCycle(0)
+    setActiveWorkspace('library')
     setStatus('已退出登录。')
   }
 
@@ -344,7 +385,7 @@ function App() {
       const imported = await bulkImportNotes(localMigrationNotes)
       markLocalNotesMigrated()
       setLocalMigrationNotes([])
-      const cloudNotes = [...imported, ...notes]
+      const cloudNotes = mergeCloudNotes(imported, notes)
       setNotes(cloudNotes)
       setSelectedId(imported[0]?.id ?? cloudNotes[0]?.id ?? '')
       restartIndexStatusRefresh()
@@ -358,110 +399,60 @@ function App() {
 
   function updateSelectedNote(patch: Partial<Note>) {
     if (!selectedNote) return
-    const updatedAt = new Date().toISOString()
-    const nextPatch = { ...patch, updatedAt }
+    saveQueue.seed(selectedNote.id, selectedNote.updatedAt)
     setNotes((current) =>
       current.map((note) =>
-        note.id === selectedNote.id ? { ...note, ...nextPatch } : note,
+        note.id === selectedNote.id ? { ...note, ...patch } : note,
       ),
     )
-    scheduleCloudSave(selectedNote.id, nextPatch)
-  }
-
-  function scheduleCloudSave(noteId: string, patch: Partial<Note>) {
-    pendingSaveRef.current[noteId] = { ...pendingSaveRef.current[noteId], ...patch }
-    setSaveState('dirty')
-
-    if (autosaveTimersRef.current[noteId]) clearTimeout(autosaveTimersRef.current[noteId])
-    autosaveTimersRef.current[noteId] = setTimeout(() => {
-      void flushCloudSave(noteId)
-    }, 700)
-  }
-
-  async function flushCloudSave(noteId: string) {
-    const patch = pendingSaveRef.current[noteId]
-    if (!patch) return
-
-    delete pendingSaveRef.current[noteId]
-    if (autosaveTimersRef.current[noteId]) {
-      clearTimeout(autosaveTimersRef.current[noteId])
-      delete autosaveTimersRef.current[noteId]
-    }
-
-    await persistCloudSave(noteId, patch)
-  }
-
-  async function persistCloudSave(noteId: string, patch: Partial<Note>) {
-    const version = saveVersionRef.current + 1
-    saveVersionRef.current = version
-    setSaveState('saving')
-
-    try {
-      await updateCloudNote(noteId, patch)
-      if (Object.prototype.hasOwnProperty.call(patch, 'content')) restartIndexStatusRefresh()
-      if (saveVersionRef.current !== version) return
-      setSaveState('saved')
-      setLastSavedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
-    } catch {
-      if (saveVersionRef.current !== version) return
-      setSaveState('error')
-      setStatus('云端保存失败，请稍后重试。')
-    }
+    saveQueue.enqueue(selectedNote.id, patch)
   }
 
   async function saveSelectedNote() {
     if (!selectedNote) return
-    const updatedAt = new Date().toISOString()
-    const patch = {
-      title: selectedNote.title,
-      content: selectedNote.content,
-      summary: selectedNote.summary,
-      tags: selectedNote.tags,
-      topic: selectedNote.topic,
-      source: selectedNote.source,
-      relatedNoteIds: selectedNote.relatedNoteIds,
-      updatedAt,
-    }
-
-    if (autosaveTimersRef.current[selectedNote.id]) {
-      clearTimeout(autosaveTimersRef.current[selectedNote.id])
-      delete autosaveTimersRef.current[selectedNote.id]
-    }
-    delete pendingSaveRef.current[selectedNote.id]
-
-    setNotes((current) => current.map((note) => (note.id === selectedNote.id ? { ...note, updatedAt } : note)))
-    await persistCloudSave(selectedNote.id, patch)
+    await saveQueue.flush(selectedNote.id)
   }
 
   async function createNote(content = '', relatedNoteIds: string[] = []) {
-    const now = new Date().toISOString()
-    const title = extractTitle(content, '未命名素材')
-    const note = await createCloudNote({
-      title,
-      content,
-      summary: '',
-      tags: [],
-      topic: 'Inbox',
-      source: '手动创建',
-      createdAt: now,
-      updatedAt: now,
-      relatedNoteIds,
-    })
+    try {
+      const now = new Date().toISOString()
+      const title = extractTitle(content, '未命名素材')
+      const note = await createCloudNote({
+        title,
+        content,
+        summary: '',
+        tags: [],
+        topic: 'Inbox',
+        source: '手动创建',
+        createdAt: now,
+        updatedAt: now,
+        relatedNoteIds,
+      })
 
-    setNotes((current) => [note, ...current])
-    setSelectedId(note.id)
-    restartIndexStatusRefresh()
-    setStatus('已创建新素材。')
+      setNotes((current) => [note, ...current])
+      setSelectedId(note.id)
+      restartIndexStatusRefresh()
+      setStatus('已创建新素材。')
+      if (window.innerWidth <= 760) { setShowLibrary(false); setShowAssistant(false) }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '创建失败，请重试。')
+    }
   }
 
   async function deleteSelectedNote() {
     if (!selectedNote) return
-    await deleteCloudNote(selectedNote.id)
-    const nextNotes = notes.filter((note) => note.id !== selectedNote.id)
-    setNotes(nextNotes)
-    setSelectedId(nextNotes[0]?.id ?? '')
-    restartIndexStatusRefresh()
-    setStatus(`已删除「${selectedNote.title}」。`)
+    if (!window.confirm(`删除“${selectedNote.title}”？`)) return
+    if (!await saveQueue.flush(selectedNote.id)) return
+    try {
+      await deleteCloudNote(selectedNote.id)
+      saveQueue.forget(selectedNote.id)
+      setNotes(current => current.filter(note => note.id !== selectedNote.id))
+      setSelectedId(current => current === selectedNote.id ? '' : current)
+      restartIndexStatusRefresh()
+      setStatus(`已删除「${selectedNote.title}」。`)
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '删除失败，请重试。')
+    }
   }
 
   function addTag() {
@@ -486,23 +477,26 @@ function App() {
 
   async function importMarkdownFiles(files: FileList | null) {
     if (!files?.length) return
-    const imported: Note[] = []
-
-    for (const file of Array.from(files)) {
-      if (!file.name.endsWith('.md')) continue
-      imported.push(parseMarkdownToNote(await file.text(), file.name))
+    try {
+      const imported: Note[] = []
+      for (const file of Array.from(files)) {
+        if (!file.name.toLowerCase().endsWith('.md')) continue
+        imported.push(parseMarkdownToNote(await file.text(), file.name))
+      }
+      if (!imported.length) {
+        setStatus('没有发现可导入的 Markdown 文件。')
+        return
+      }
+      const cloudNotes = await bulkImportNotes(imported)
+      setNotes((current) => mergeCloudNotes(cloudNotes, current))
+      setSelectedId(cloudNotes[0]?.id ?? '')
+      restartIndexStatusRefresh()
+      setStatus(`已导入 ${cloudNotes.length} 条 Markdown 素材。`)
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '导入失败，请重试。')
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = ''
     }
-
-    if (!imported.length) {
-      setStatus('没有发现可导入的 Markdown 文件。')
-      return
-    }
-
-    const cloudNotes = await bulkImportNotes(imported)
-    setNotes((current) => [...cloudNotes, ...current])
-    setSelectedId(cloudNotes[0].id)
-    restartIndexStatusRefresh()
-    setStatus(`已导入 ${cloudNotes.length} 条 Markdown 素材。`)
   }
 
   async function openLocalVault() {
@@ -511,25 +505,34 @@ function App() {
       return
     }
 
-    const directory = await window.showDirectoryPicker()
-    const imported: Note[] = []
+    try {
+      const directory = await window.showDirectoryPicker()
+      const imported: Note[] = []
+      const filenames: string[] = []
 
-    for await (const handle of directory.values()) {
-      if (handle.kind === 'file' && handle.name.endsWith('.md')) {
-        const file = await handle.getFile()
-        imported.push(parseMarkdownToNote(await file.text(), handle.name))
+      for await (const handle of directory.values()) {
+        if (handle.kind === 'file' && handle.name.toLowerCase().endsWith('.md')) {
+          const file = await handle.getFile()
+          imported.push(parseMarkdownToNote(await file.text(), handle.name))
+          filenames.push(handle.name)
+        }
       }
-    }
 
-    setVaultHandle(directory)
-    if (imported.length) {
-      const cloudNotes = await bulkImportNotes(imported)
-      setNotes((current) => [...cloudNotes, ...current])
-      setSelectedId(cloudNotes[0].id)
-      restartIndexStatusRefresh()
-    setStatus(`已打开本地库，并导入 ${cloudNotes.length} 条 Markdown 素材。`)
-    } else {
-      setStatus('已获得目录授权，但目录里暂时没有 Markdown 文件。')
+      if (imported.length) {
+        const cloudNotes = await bulkImportNotes(imported)
+        vaultFileNames.current = new Map(cloudNotes.map((note, index) => [note.id, filenames[index]]))
+        setNotes((current) => mergeCloudNotes(cloudNotes, current))
+        setSelectedId(cloudNotes[0]?.id ?? '')
+        restartIndexStatusRefresh()
+        setStatus(`已打开本地库，并导入 ${cloudNotes.length} 条 Markdown 素材。`)
+      } else {
+        vaultFileNames.current.clear()
+        setStatus('已获得目录授权，但目录里暂时没有 Markdown 文件。')
+      }
+      setVaultHandle(directory)
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      setStatus(error instanceof Error ? error.message : '打开本地库失败。')
     }
   }
 
@@ -539,14 +542,30 @@ function App() {
       return
     }
 
-    for (const note of notes) {
-      const handle = await vaultHandle.getFileHandle(`${safeFileName(note.title)}.md`, { create: true })
-      const writer = await handle.createWritable()
-      await writer.write(serializeNoteToMarkdown(note))
-      await writer.close()
-    }
+    try {
+      const used = new Set<string>()
+      for await (const entry of vaultHandle.values()) used.add(entry.name.toLocaleLowerCase())
+      for (const name of vaultFileNames.current.values()) used.add(name.toLocaleLowerCase())
+      for (const note of notes) {
+        if (vaultFileNames.current.has(note.id)) continue
+        const stem = `${safeFileName(note.title)}-${safeFileName(note.id)}`
+        let filename = `${stem}.md`
+        let suffix = 2
+        while (used.has(filename.toLocaleLowerCase())) filename = `${stem}-${suffix++}.md`
+        used.add(filename.toLocaleLowerCase())
+        vaultFileNames.current.set(note.id, filename)
+      }
+      for (const note of notes) {
+        const handle = await vaultHandle.getFileHandle(vaultFileNames.current.get(note.id)!, { create: true })
+        const writer = await handle.createWritable()
+        await writer.write(serializeNoteToMarkdown(note))
+        await writer.close()
+      }
 
-    setStatus(`已写入 ${notes.length} 篇 Markdown 到本地库。`)
+      setStatus(`已写入 ${notes.length} 篇 Markdown 到本地库。`)
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '写回失败，请重试。')
+    }
   }
 
   async function runAnalysis() {
@@ -675,8 +694,17 @@ function App() {
   }
 
   function openCitation(citation: Citation) {
+    setActiveWorkspace('library')
     setSelectedId(citation.noteId)
     setFocusRequest({ noteId: citation.noteId, quote: citation.quote, token: Date.now() })
+  }
+
+  function openWikiSource(noteId: string, quote: string) {
+    setActiveWorkspace('library')
+    setShowLibrary(window.innerWidth > 760)
+    if (window.innerWidth <= 1100) setShowAssistant(false)
+    setSelectedId(noteId)
+    setFocusRequest({ noteId, quote, token: Date.now() })
   }
 
   function downloadSelectedNote() {
@@ -701,15 +729,49 @@ function App() {
     window.addEventListener('mouseup', onUp)
   }
 
+  function openAssistant() {
+    if (window.innerWidth <= 760) setShowLibrary(false)
+    setShowAssistant(true)
+  }
+
+  function toggleLibrary() {
+    if (window.innerWidth <= 760) setShowAssistant(false)
+    setShowLibrary(value => !value)
+  }
+
+  function selectNote(id: string) {
+    setSelectedId(id)
+    if (window.innerWidth <= 760) { setShowLibrary(false); setShowAssistant(false) }
+  }
+
+  async function openWiki() {
+    if (await saveQueue.flushAll()) setActiveWorkspace('wiki')
+  }
+
+  async function openGovernance() {
+    if (await saveQueue.flushAll()) setShowGovernancePanel(true)
+  }
+
+  if (activeWorkspace === 'wiki') {
+    return (
+      <WikiWorkspace
+        notes={notes}
+        onOpenLibrary={() => setActiveWorkspace('library')}
+        onOpenSource={openWikiSource}
+      />
+    )
+  }
+
   return (
     <main
       className={`app-shell ${showLibrary ? '' : 'library-collapsed'} ${showAssistant ? 'assistant-open' : 'assistant-collapsed'}`}
       style={{ '--assistant-width': `${assistantWidth}px` } as CSSProperties}
     >
+      {showLibrary ? <button type="button" className="library-scrim" tabIndex={-1} onClick={() => setShowLibrary(false)} aria-label="关闭素材区遮罩" /> : null}
       {showLibrary ? (
         <aside className="sidebar" aria-label="素材库导航">
           <div className="brand-block">
-            <img className="brand-mark" src="/mine-logo.png" alt="" />
+            <img className="brand-mark" src="/mine-logo-small.png" alt="" />
             <div>
               <h1>Mine</h1>
               <p>素材工作室</p>
@@ -719,12 +781,17 @@ function App() {
             </button>
           </div>
 
+          <nav className="mode-switch" aria-label="工作区切换">
+            <button type="button" className="is-active" aria-current="page"><Library size={15} />素材库</button>
+            <button type="button" onClick={openWiki}><BookOpen size={15} />Wiki</button>
+          </nav>
+
           <div className="nav-actions">
             <button type="button" onClick={() => createNote()}>
               <FilePlus2 size={17} />
               新建素材
             </button>
-            <button type="button" onClick={() => setShowImportPanel(true)}>
+            <button type="button" onClick={() => setShowImportPanel(true)} title="导入素材" aria-label="导入素材">
               <FileDown size={17} />
               导入素材
             </button>
@@ -740,7 +807,8 @@ function App() {
 
           <div className="search-box">
             <Search size={16} />
-            <input value={search} placeholder="搜索素材" onChange={(event) => setSearch(event.target.value)} />
+            <input value={search} placeholder="搜索素材" aria-label="搜索素材" onChange={(event) => setSearch(event.target.value)} />
+            {search ? <button type="button" onClick={() => setSearch('')} aria-label="清除搜索" title="清除搜索"><X size={14} /></button> : null}
           </div>
 
           <div className="list-summary">
@@ -754,11 +822,11 @@ function App() {
                 type="button"
                 key={note.id}
                 className={`note-row ${note.id === selectedNote?.id ? 'is-selected' : ''}`}
-                onClick={() => setSelectedId(note.id)}
+                onClick={() => selectNote(note.id)}
               >
-                <strong>{note.title}</strong>
+                  <strong><FilePenLine size={15} aria-hidden="true" /><span className="note-row-title">{note.title}</span></strong>
                 <span>{note.summary || note.content.replace(/\s+/g, ' ').slice(0, 76) || '空白素材'}</span>
-                <small>{note.tags.slice(0, 2).map((tag) => `#${tag}`).join('  ') || note.topic}</small>
+                  <small><span>{note.tags.slice(0, 2).map((tag) => `#${tag}`).join('  ') || note.topic}</span><time dateTime={note.updatedAt}>{new Date(note.updatedAt).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })}</time></small>
               </button>
             ))}
             {!visibleNotes.length ? <p className="library-empty">当前筛选下没有素材。</p> : null}
@@ -782,6 +850,10 @@ function App() {
           </details>
 
           <div className="utility-actions">
+            <button type="button" className="governance-entry" onClick={openGovernance} title="检查重复素材与标签候选">
+              <Tags size={16} />
+              素材治理
+            </button>
             <button type="button" onClick={openLocalVault} title="打开本地 Markdown 素材库">
               <FolderOpen size={16} />
               打开本地库
@@ -825,12 +897,15 @@ function App() {
         </aside>
       ) : (
         <aside className="compact-rail" aria-label="快速导航">
-          <img className="compact-brand" src="/mine-logo.png" alt="" />
-          <button type="button" onClick={() => setShowLibrary(true)} aria-label="打开素材区" title="打开素材区">
+          <img className="compact-brand" src="/mine-logo-small.png" alt="" />
+          <button type="button" onClick={toggleLibrary} aria-label="打开素材区" title="打开素材区">
             <PanelLeftOpen size={18} />
           </button>
           <button type="button" onClick={() => createNote()} aria-label="新建素材" title="新建素材">
             <FilePlus2 size={18} />
+          </button>
+          <button type="button" onClick={openWiki} aria-label="打开 Wiki" title="打开 Wiki">
+            <BookOpen size={18} />
           </button>
         </aside>
       )}
@@ -846,7 +921,7 @@ function App() {
             <div className="layout-controls" aria-label="布局控制">
               <button
                 type="button"
-                onClick={() => setShowLibrary((value) => !value)}
+                onClick={toggleLibrary}
                 aria-label={showLibrary ? '收起素材区' : '打开素材区'}
                 title={showLibrary ? '收起素材区' : '打开素材区'}
               >
@@ -862,7 +937,7 @@ function App() {
                 title="立即保存"
               >
                 <Save size={16} />
-                保存
+                {saveState === 'error' ? '重试保存' : '保存'}
               </button>
               <span className={`save-state save-state-${saveState}`}>{saveStateLabel(saveState, lastSavedAt)}</span>
             </div>
@@ -879,8 +954,7 @@ function App() {
                 aria-expanded={moreMenuOpen}
                 title="更多操作"
               >
-                更多
-                <ChevronDown size={14} />
+                <Ellipsis size={18} />
               </button>
               {moreMenuOpen ? (
                 <div className="more-menu-popover" role="menu">
@@ -926,8 +1000,10 @@ function App() {
 
         {selectedNote ? (
           <article className="document-surface">
+            <div className="document-context"><FilePenLine size={16} /><span>{selectedNote.topic || 'Inbox'}</span><span>{selectedNote.content.replace(/\s/g, '').length.toLocaleString()} 字</span></div>
             <textarea
               className="title-input"
+              aria-label="素材标题"
               value={selectedNote.title}
               onChange={(event) => updateSelectedNote({ title: event.target.value })}
               rows={1}
@@ -1022,7 +1098,7 @@ function App() {
             onAsk={askKnowledgeBase}
             onGenerate={createOutput}
             onSaveOutput={saveOutputAsNote}
-            onSelectNote={setSelectedId}
+            onSelectNote={selectNote}
             onOpenCitation={openCitation}
             askScopeMode={askScopeMode}
             setAskScopeMode={setAskScopeMode}
@@ -1062,14 +1138,43 @@ function App() {
         </aside>
       ) : (
         <aside className="assistant-rail" aria-label="AI 面板已收起">
-          <button type="button" onClick={() => setShowAssistant(true)} aria-label="打开 AI 收纳面板" title="打开 AI 收纳面板">
+          <button type="button" onClick={openAssistant} aria-label="打开 AI 收纳面板" title="打开 AI 收纳面板">
             <PanelRightOpen size={17} />
             <span>AI</span>
           </button>
         </aside>
       )}
 
-      <p className="status-line">{status}</p>
+      <p className="status-line" aria-live="polite">{status}</p>
+
+      {showGovernancePanel ? (
+        <Suspense
+          fallback={
+            <div className="governance-backdrop">
+              <section className="governance-panel governance-loading">正在检查素材库...</section>
+            </div>
+          }
+        >
+          <GovernancePanel
+            notes={notes}
+            onClose={() => setShowGovernancePanel(false)}
+            onOpenNote={(noteId) => {
+              setSelectedId(noteId)
+              setShowLibrary(true)
+              setShowGovernancePanel(false)
+            }}
+            onNotesUpdated={(updatedNotes) => {
+              const updates = new Map(updatedNotes.map((note) => [note.id, note]))
+              for (const note of updatedNotes) saveQueue.seed(note.id, note.updatedAt)
+              setNotes((current) => current.map((note) => {
+                const updated = updates.get(note.id)
+                if (!updated || saveQueue.status(note.id) !== 'saved') return note
+                return updated
+              }))
+            }}
+          />
+        </Suspense>
+      ) : null}
 
       {showImportPanel ? (
         <Suspense
@@ -1105,7 +1210,7 @@ function App() {
     })
     const nextNotes = [note, ...notes]
 
-    setNotes(nextNotes)
+    setNotes(current => [note, ...current])
     setSelectedId(note.id)
     setShowImportPanel(false)
     restartIndexStatusRefresh()
@@ -1120,15 +1225,15 @@ function App() {
 
     try {
       const analysis = await analyzeNote(note, nextNotes)
-      const updatedAt = new Date().toISOString()
-      await updateCloudNote(note.id, {
+      const patch = {
         title: analysis.titleSuggestion,
         summary: analysis.summary,
         tags: mergeTags(note.tags, analysis.tags),
         topic: analysis.topic,
         relatedNoteIds: analysis.relatedNotes.map((related) => related.id),
-        updatedAt,
-      })
+      }
+      saveQueue.seed(note.id, note.updatedAt)
+      saveQueue.enqueue(note.id, patch)
       setNotes((current) =>
         current.map((item) =>
           item.id === note.id
@@ -1139,11 +1244,11 @@ function App() {
                 tags: mergeTags(item.tags, analysis.tags),
                 topic: analysis.topic,
                 relatedNoteIds: analysis.relatedNotes.map((related) => related.id),
-                updatedAt,
               }
             : item,
         ),
       )
+      if (!await saveQueue.flush(note.id)) return
       setStatus(`已导入并整理「${analysis.titleSuggestion}」。`)
     } finally {
       setBusy('')
@@ -1286,6 +1391,11 @@ function KnowledgeGraph({
       </svg>
     </section>
   )
+}
+
+function mergeCloudNotes(imported: Note[], current: Note[]) {
+  const ids = new Set(imported.map(note => note.id))
+  return [...imported, ...current.filter(note => !ids.has(note.id))]
 }
 
 function safeFileName(title: string) {

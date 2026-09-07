@@ -2,18 +2,23 @@ import { compare, hash } from 'bcryptjs'
 import { jwtVerify, SignJWT } from 'jose'
 
 const sessionCookie = 'mine_session'
+const boundedPasswordPrefix = 'bcrypt72:'
 const encoder = new TextEncoder()
 
 export async function registerUser(store, { email, password }) {
   const normalizedEmail = normalizeEmail(email)
-  assertPassword(password)
-  const passwordHash = await hash(password, 12)
+  const value = assertPassword(password)
+  const passwordHash = boundedPasswordPrefix + await hash(value, 12)
   return store.createUser({ email: normalizedEmail, passwordHash })
 }
 
 export async function loginUser(store, { email, password }) {
   const user = await store.findUserByEmail(normalizeEmail(email))
-  if (!user || !(await compare(String(password || ''), user.passwordHash))) {
+  const value = String(password || '')
+  // A version marker enforces the limit for new accounts without locking out legacy long passwords.
+  const bounded = user?.passwordHash.startsWith(boundedPasswordPrefix)
+  const passwordHash = bounded ? user.passwordHash.slice(boundedPasswordPrefix.length) : user?.passwordHash
+  if (!user || (bounded && Buffer.byteLength(value, 'utf8') > 72) || !(await compare(value, passwordHash))) {
     const error = new Error('邮箱或密码不正确。')
     error.status = 401
     throw error
@@ -68,11 +73,12 @@ function normalizeEmail(email) {
 
 function assertPassword(password) {
   const value = String(password || '')
-  if (value.length < 8 || value.length > 128) {
-    const error = new Error('密码需要 8 到 128 位。')
+  if (value.length < 8 || Buffer.byteLength(value, 'utf8') > 72) {
+    const error = new Error('密码至少需要 8 个字符，且 UTF-8 编码不能超过 72 字节。')
     error.status = 400
     throw error
   }
+  return value
 }
 
 function parseCookies(value) {
